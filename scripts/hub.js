@@ -13,7 +13,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '1.1.1';
+const VERSION = '1.2.0';
 const TOOLS = ['lastgravity', 'claude', 'codex', 'antigravity', 'outro'];
 const TOOL_LABEL = { lastgravity: 'LastGravity', claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', outro: 'Agente' };
 const TYPES = ['chat', 'context', 'task', 'claim', 'done', 'handoff'];

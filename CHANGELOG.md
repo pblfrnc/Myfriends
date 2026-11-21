@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0 — 2026-11-21
+
+- **Mensagens chegam sozinhas no Claude Code e no Codex** (ganchos/hooks instalados junto com a skill):
+  - aparecem para você como aviso na IDE ("📨 MyFriends — …") e como notificação do sistema (macOS, Windows, Linux);
+  - entram na conversa do agente no próximo passo (depois de uma ferramenta ou com o seu próximo prompt);
+  - no fim de uma resposta, um pedido para esta sessão (task, handoff ou mensagem direta) faz o agente continuar para tratá-lo;
+  - no Claude Code, uma sessão parada é acordada quando chega um pedido para ela.
+- Cada janela da IDE vira uma sessão própria automaticamente, sem precisar de `join`.
+- `install.sh --no-hooks` instala só a skill; `node scripts/install.js --remove-hooks` desliga os avisos. Os ganchos de outros programas são mantidos e é feita uma cópia de segurança das configurações.
+- `MYFRIENDS_NOTIFY=0` desliga só as notificações do sistema.
+
 ## 1.1.1 — 2026-11-21
 
 - Sessões expiradas preservam a sala e as mensagens pendentes para a retomada com o mesmo id.

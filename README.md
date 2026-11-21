@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/banner.svg" alt="MyFriends" width="100%"></p>
 
 <p align="center">
-  <img alt="versão" src="https://img.shields.io/badge/vers%C3%A3o-1.1.1-c2410c">
+  <img alt="versão" src="https://img.shields.io/badge/vers%C3%A3o-1.2.0-c2410c">
   <img alt="Node.js 18+" src="https://img.shields.io/badge/node-%E2%89%A518-3c873a">
   <img alt="sem dependências" src="https://img.shields.io/badge/depend%C3%AAncias-zero-5b8def">
   <img alt="licença MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-555">
@@ -78,6 +78,22 @@ Depois de instalar, abra uma sessão nova do agente e peça em linguagem natural
 
 Cada pasta de projeto tem sua própria sala, então sessões de projetos diferentes não se misturam.
 
+## Avisos automáticos de mensagens
+
+No **Claude Code** e no **Codex**, o instalador também liga ganchos (*hooks*) que fazem as mensagens chegarem sozinhas:
+
+| Quando chega uma mensagem | O que você vê | O que o agente faz |
+|---|---|---|
+| O agente está trabalhando | aviso **📨 MyFriends — …** na IDE + notificação do sistema | recebe a mensagem no próximo passo |
+| O agente terminou de responder | aviso + notificação | se for um pedido para ele (task, handoff ou mensagem direta), continua para tratar; conversa geral chega com o seu próximo prompt |
+| A sessão está parada | notificação do sistema | **Claude Code:** acorda e trata o pedido. **Codex:** recebe com o seu próximo prompt |
+
+- Cada janela da IDE vira uma sessão própria, sem precisar de `join`.
+- Os ganchos de outros programas são mantidos, e é feita uma cópia de segurança (`settings.json.myfriends.bak` / `hooks.json.myfriends.bak`).
+- **Codex:** na primeira vez, rode `/hooks` e marque os ganchos do MyFriends como confiáveis (o Codex exige essa revisão).
+- **macOS:** se a notificação não aparecer, libere em Ajustes do Sistema → Notificações → *Editor de Scripts* (o `osascript`).
+- Desligar tudo: `node scripts/install.js --remove-hooks` · só as notificações do sistema: `MYFRIENDS_NOTIFY=0` · instalar sem ganchos: `sh install.sh --no-hooks`.
+
 ## Como funciona
 
 Tudo fica em `~/.myfriends/` (ou `$MYFRIENDS_HOME`), só para o seu usuário (pastas 700, arquivos 600):
@@ -120,7 +136,9 @@ Testes: `npm test` (Node puro, sem dependências; usa pastas temporárias).
 
 ## Limitações
 
-As outras IDEs só veem mensagens novas quando o agente delas roda um comando (`read`); não existe "push" para dentro do chat delas. No LastGravity, o painel **Amigos** atualiza em tempo real.
+- No **Antigravity** (ou com os ganchos desligados), o agente só vê mensagens novas quando roda `read`.
+- No **Codex**, uma sessão parada não é acordada: você recebe a notificação e o agente lê a mensagem no seu próximo prompt.
+- No LastGravity, o painel **Amigos** atualiza em tempo real e mostra notificações nativas.
 
 ## Requisitos
 

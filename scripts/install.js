@@ -3,6 +3,8 @@
 //   node install.js                 mostra o que seria gravado (nada é alterado)
 //   node install.js --yes           instala/atualiza onde a IDE existir
 //   node install.js --yes --only claude,codex
+//   node install.js --yes --no-hooks     instala só a skill, sem os avisos automáticos de mensagens
+//   node install.js --remove-hooks        desliga os avisos automáticos (mantém a skill)
 // Locais (pesquisados em nov/2026):
 //   Claude Code  ~/.claude/skills/<nome>/SKILL.md                       (code.claude.com/docs/en/skills)
 //   Codex        ~/.agents/skills/<nome>/SKILL.md (~/.codex/skills é legado)   (developers.openai.com/codex/skills)
@@ -12,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { VERSION } = require('./hub');
+const HK = require('./hooks-install');
 
 const SKILL_DIR = path.resolve(__dirname, '..');
 const NAME = 'myfriends';
@@ -124,19 +127,31 @@ function copySkill(dest, tool, src = SKILL_DIR) {
 function plan(ids, { home = userHome(), force = false } = {}) {
   const all = targets({ home });
   const chosen = all.filter((t) => (!ids || !ids.length || ids.includes(t.id)) && (t.detected || force));
-  return chosen.map((t) => ({ id: t.id, label: t.label, dir: t.dir, replaces: t.installed, files: render(t.dir, t.id).map((f) => ({ path: f.path, bytes: f.data.length })) }));
+  return chosen.map((t) => ({ id: t.id, label: t.label, dir: t.dir, replaces: t.installed, hooksFile: HK.SUPPORTED.includes(t.id) ? HK.file(t.id, home) : null, files: render(t.dir, t.id).map((f) => ({ path: f.path, bytes: f.data.length })) }));
 }
 
-function install(ids, { home = userHome(), force = false } = {}) {
-  return plan(ids, { home, force }).map((p) => ({ id: p.id, label: p.label, dir: p.dir, files: copySkill(p.dir, p.id) }));
+// hooks (padrão: sim) liga os avisos automáticos de mensagens no Claude Code e no Codex.
+function install(ids, { home = userHome(), force = false, hooks = true } = {}) {
+  return plan(ids, { home, force }).map((p) => {
+    const r = { id: p.id, label: p.label, dir: p.dir, files: copySkill(p.dir, p.id) };
+    if (hooks && p.hooksFile) {
+      try { r.hooks = HK.enable(p.id, p.dir, { h: home }); } catch (e) { r.hooksError = e.message; }
+    }
+    return r;
+  });
 }
 
-module.exports = { targets, plan, install, copySkill, render, TARGETS, SKILL_DIR, VERSION };
+module.exports = { targets, plan, install, copySkill, render, TARGETS, SKILL_DIR, VERSION, hooks: HK };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
   const yes = args.includes('--yes') || args.includes('-y');
   const force = args.includes('--force');
+  const noHooks = args.includes('--no-hooks');
+  if (args.includes('--remove-hooks')) {
+    for (const id of HK.SUPPORTED) { try { const f = HK.disable(id); if (f) console.log(`✔ avisos automáticos desligados: ${f}`); } catch (e) { console.log(`✖ ${id}: ${e.message}`); } }
+    process.exit(0);
+  }
   const oi = args.indexOf('--only');
   const only = oi >= 0 ? String(args[oi + 1] || '').split(',').filter(Boolean) : null;
   const ts = targets();
@@ -145,8 +160,16 @@ if (require.main === module) {
   const p = plan(only, { force });
   if (!p.length) { console.log('\nNenhuma IDE compatível encontrada. Use --force --only <ide> para instalar mesmo assim.'); process.exit(0); }
   console.log('\nSerá gravado:');
-  for (const x of p) { console.log(`  ${x.label}: ${x.dir}${x.replaces ? ' (substitui a versão instalada)' : ''}`); for (const f of x.files) console.log(`     ${f.path}  (${f.bytes} bytes)`); }
+  for (const x of p) { console.log(`  ${x.label}: ${x.dir}${x.replaces ? ' (substitui a versão instalada)' : ''}`); for (const f of x.files) console.log(`     ${f.path}  (${f.bytes} bytes)`);
+    if (x.hooksFile && !noHooks) console.log(`     + avisos automáticos de mensagens (hooks) em ${x.hooksFile} — os outros ganchos são mantidos; cópia de segurança em ${path.basename(x.hooksFile)}.myfriends.bak`); }
   if (!yes) { console.log('\nNada foi alterado. Rode de novo com --yes para instalar.'); process.exit(0); }
-  for (const r of install(only, { force })) console.log(`✔ ${r.label}: ${r.dir}`);
-  console.log('\nPronto. Se a skill não aparecer, reinicie a IDE (ou abra uma nova sessão do agente).');
+  const res = install(only, { force, hooks: !noHooks });
+  for (const r of res) {
+    console.log(`✔ ${r.label}: ${r.dir}`);
+    if (r.hooks) console.log(`  ✔ avisos automáticos ligados (${r.hooks})`);
+    if (r.hooksError) console.log(`  ✖ avisos automáticos: ${r.hooksError}`);
+  }
+  console.log('\nPronto. Abra uma nova sessão do agente (ou reinicie a IDE) para carregar a skill.');
+  if (res.some((r) => r.id === 'codex' && r.hooks)) console.log('No Codex: na primeira vez, rode /hooks e marque os ganchos do MyFriends como confiáveis (o Codex exige essa revisão).');
+  if (!noHooks) console.log('Para desligar os avisos automáticos: node scripts/install.js --remove-hooks');
 }
