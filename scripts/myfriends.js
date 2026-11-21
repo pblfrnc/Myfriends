@@ -9,19 +9,32 @@ const H = require('./hub');
 const HELP = `MyFriends — sessões de agentes conversando na mesma máquina
 
   join   [--name "Claude Code · projeto"] [--tool claude|codex|antigravity|lastgravity|outro] [--room sala]
-  who                                  quem está online (marca mesma sala / mesmo projeto)
+         cria uma sessão NOVA e mostra o id dela; use --session <id> em todos os próximos comandos
+         (ou export MYFRIENDS_SESSION=<id>). "join --session <id>" volta para uma sessão existente.
+  who                                  quem está online + seus pedidos e o que espera o seu aceite
   status "<o que estou fazendo>"       atualiza a sua linha de presença
+  room   [sala]                        mostra a sua sala ou muda para outra
   send   "<texto>" [--to <id|nome|ferramenta>] [--type chat|context|task|handoff] [--files a,b]
+         handoff: --branch <branch@commit> --changes "<onde estão as mudanças locais>"
+                  --tests "<comando: resultado>" --next "<próximo passo>"
   share  --summary "<resumo/decisões>" [--files a,b] [--snippet arquivo:10-40] [--to ...]
-  read   [--since <m_id|10m|2h|data>] [--wait 30] [--all]
-  tasks                                fila de tarefas da sala e arquivos reservados
+  read   [--since <m_id|10m|2h|data>] [--wait 30] [--all] [--limit 200]
+  tasks                                fila da sala (enviada / assumida / concluída) e arquivos reservados
+  ack    <id> ["nota"]                 assume uma task/handoff (mesmo que claim <id>)
   claim  <id-da-tarefa> | claim --files a,b [--note "..."]   (pega/reserva sem duplicar)
   done   <id> "<resultado>"            conclui uma tarefa ou libera uma reserva
   rooms                                salas existentes
   leave                                sai (libera reservas)
 
-Opções gerais: --json  --dir <pasta do projeto>  --session <id>  --tool <ferramenta>
+Opções gerais: --session <id>  --json  --dir <pasta do projeto>  --tool <ferramenta>
 Hub: ${'$'}MYFRIENDS_HOME ou ~/.myfriends`;
+
+const HANDOFF_FIELDS = [
+  ['branch', 'Branch/commit', /\b(branch|commit|ramo|sha|HEAD)\b|\b[0-9a-f]{7,40}\b/i],
+  ['changes', 'Mudanças locais', /(commitad|uncommitted|working tree|stash|mudan[çc]as|altera[çc][õo]es|diff|nada pendente)/i],
+  ['tests', 'Último teste', /\b(tests?|testes?|npm test|pytest|jest)\b/i],
+  ['next', 'Próximo passo', /(pr[óo]xim|next|falta|pendente)/i],
+];
 
 const BOOL = new Set(['json', 'all', 'force', 'help', 'quiet']);
 function parse(argv) {
@@ -47,6 +60,8 @@ function detectTool(o) {
   return null;
 }
 
+const sidOf = (o) => o.session || process.env.MYFRIENDS_SESSION || null;
+
 class Cli {
   constructor(o, out) {
     this.o = o;
@@ -55,46 +70,64 @@ class Cli {
     this.folder = H.realDir(o.dir || process.cwd());
     this.stateFile = this.hub.p('state', `${H.sha1(process.platform === 'win32' ? this.folder.toLowerCase() : this.folder).slice(0, 20)}.json`);
     this.tool = detectTool(o);
+    this.warnings = [];
   }
-  state() { return this.hub.readJson(this.stateFile, {}) || {}; }
-  saveState(s) {
-    const st = this.state();
+  // Estado por pasta: sessões criadas pela CLI aqui (mais recente primeiro). Só serve de "plano B"
+  // para comandos sem --session; cada janela/instância deve passar o próprio id.
+  state() {
+    const st = this.hub.readJson(this.stateFile, {}) || {};
+    let recent = Array.isArray(st.recent) ? st.recent : [];
+    if (!recent.length) recent = [st.last, ...Object.values(st.byTool || {})].filter((x) => x && x.id); // estado da 1.0.0
+    const seen = new Set();
+    st.recent = recent.filter((x) => x && x.id && !seen.has(x.id) && seen.add(x.id));
+    return st;
+  }
+  saveState(st) {
     st.folder = this.folder;
-    st.last = { id: s.id, name: s.name, tool: s.tool, room: s.room };
-    st.byTool = { ...(st.byTool || {}), [s.tool]: st.last };
+    delete st.byTool; delete st.last;
+    st.recent = st.recent.slice(0, 20);
     this.hub.writeAtomic(this.stateFile, JSON.stringify(st, null, 2));
   }
-  join(extra = {}) {
+  remember(s) {
     const st = this.state();
-    const tool = this.tool || st.last?.tool || 'outro';
-    const prev = this.o.session ? { id: this.o.session } : st.byTool?.[tool] || (this.tool ? null : st.last);
-    const s = this.hub.join({ id: prev?.id, name: this.o.name || prev?.name, tool, folder: this.folder, room: this.o.room || prev?.room, pid: this.o.pid ? Number(this.o.pid) : undefined, doing: this.o.doing, ...extra });
-    this.saveState(s);
+    st.recent = [{ id: s.id, tool: s.tool, name: s.name, at: Date.now() }, ...st.recent.filter((x) => x.id !== s.id && this.hub.getSession(x.id))];
+    this.saveState(st);
+  }
+  join(extra = {}) {
+    const id = sidOf(this.o);
+    const prev = id ? this.hub.getSession(id) : null;
+    const tool = this.tool || prev?.tool || 'outro';
+    const s = this.hub.join({ id: id || undefined, name: this.o.name, tool, folder: this.folder, room: this.o.room, pid: this.o.pid ? Number(this.o.pid) : undefined, doing: this.o.doing, ...extra });
+    this.resumed = !!prev;
+    this.remember(s);
     return s;
   }
-  // Sessão atual (volta a entrar sozinha se expirou ou se ainda não entrou).
+  // Sessão atual. Com --session (ou MYFRIENDS_SESSION) é exatamente aquela; sem, usa a sessão mais
+  // recente desta ferramenta nesta pasta e avisa se houver mais de uma (janelas diferentes da mesma IDE).
   me() {
-    const id = this.o.session || process.env.MYFRIENDS_SESSION;
+    const id = sidOf(this.o);
+    const patch = this.o.room ? { room: this.o.room } : {};
     if (id) {
       const s = this.hub.getSession(id);
-      if (s) return this.hub.touch(id, this.o.room ? { room: this.o.room } : {});
+      if (s) return this.hub.touch(id, patch);
       // Nunca falar em nome de outra sessão: id explícito desconhecido é erro, não "cai" na última sessão.
-      throw new Error(`sessão "${id}" não encontrada (expirou ou nunca entrou). Rode "join" de novo ou use --tool.`);
+      throw new Error(`sessão "${id}" não encontrada (expirou ou nunca entrou). Rode "join --session ${id}" para voltar com o mesmo id, ou "join" para uma sessão nova.`);
     }
     const st = this.state();
-    const prev = (this.tool && st.byTool?.[this.tool]) || (!this.tool && st.last);
-    if (prev) {
-      const s = this.hub.getSession(prev.id);
-      if (s) return this.hub.touch(prev.id, this.o.room ? { room: this.o.room } : {});
+    const cands = st.recent.filter((x) => !this.tool || x.tool === this.tool).map((x) => this.hub.getSession(x.id)).filter((s) => s && this.hub.alive(s));
+    if (cands.length) {
+      const s = cands[0];
+      if (cands.length > 1) this.warnings.push(`há ${cands.length} sessões ${this.tool || ''} vivas nesta pasta (${cands.map((x) => x.id).join(', ')}); sem --session usei a mais recente, ${s.id} "${s.name}". Se esta não é a sua, passe --session <seu id> (ou export MYFRIENDS_SESSION=<id>).`.replace('  ', ' '));
+      return this.hub.touch(s.id, patch);
     }
     this.autoJoined = true;
     return this.join();
   }
   print(text, json) {
-    if (this.o.json) this.out(JSON.stringify(json ?? { text }, null, 2));
-    else if (text) this.out(text);
+    if (this.o.json) this.out(JSON.stringify({ ...(json ?? { text }), ...(this.warnings.length ? { warning: this.warnings.join(' ') } : {}) }, null, 2));
+    else if (text) this.out(`${this.warnings.map((w) => `(aviso: ${w})\n`).join('')}${text}`);
   }
-  note() { return this.autoJoined && !this.o.json ? `(entrei automaticamente como ${this._me.id} "${this._me.name}" na sala ${this._me.room})\n` : ''; }
+  note() { return this.autoJoined && !this.o.json ? `(entrei automaticamente como ${this._me.id} "${this._me.name}" na sala ${this._me.room}; passe --session ${this._me.id} nos próximos comandos)\n` : ''; }
 
   async run(cmd) {
     const o = this.o;
@@ -103,7 +136,11 @@ class Cli {
       const s = this.join();
       const others = hub.sessions().filter((x) => x.id !== s.id);
       const same = others.filter((x) => x.room === s.room);
-      return this.print(`Entrou como ${s.id} "${s.name}" [${s.tool}] na sala ${s.room}.\n${same.length ? `Na mesma sala: ${same.map((x) => `${x.name} (${x.id})`).join(', ')}.` : 'Ninguém mais nesta sala ainda.'}${others.length > same.length ? ` Outras ${others.length - same.length} sessão(ões) online em outras salas (veja "who").` : ''}\nPróximos passos: "read" para ver mensagens, "send" para falar, "tasks" para a fila.`, { session: s, others });
+      const twins = same.filter((x) => x.tool === s.tool && x.folder === s.folder);
+      return this.print(`${this.resumed ? 'Voltou' : 'Entrou'} como ${s.id} "${s.name}" [${s.tool}] na sala ${s.room}.
+SUA SESSÃO: ${s.id} — passe --session ${s.id} em TODOS os próximos comandos desta janela (ou export MYFRIENDS_SESSION=${s.id}).
+${same.length ? `Na mesma sala: ${same.map((x) => `${x.name} (${x.id})`).join(', ')}.` : 'Ninguém mais nesta sala ainda.'}${others.length > same.length ? ` Outras ${others.length - same.length} sessão(ões) online em outras salas (veja "who").` : ''}${twins.length ? `\nAtenção: há outra(s) sessão(ões) ${s.tool} nesta pasta (${twins.map((x) => x.id).join(', ')}); são outras janelas, não você.` : ''}
+Próximos passos: "read" para ver mensagens, "send" para falar, "tasks" para a fila.`, { session: s, others, resumed: !!this.resumed });
     }
     if (cmd === 'rooms') {
       const rs = hub.rooms();
@@ -115,7 +152,11 @@ class Cli {
         const all = hub.sessions();
         const rel = all.filter((s) => o.all || s.room === me.room || s.folder === me.folder || s.id === me.id);
         const others = all.length - rel.length;
-        return this.print(`${this.note()}Sala: ${me.room} · você: ${me.id}\n${rel.map((s) => H.fmtSession(s, me)).join('\n')}${others ? `\n(+${others} sessão(ões) em outros projetos; use --all)` : ''}`, { me, sessions: o.all ? all : rel });
+        const b = hub.board(me.room, all);
+        const pend = H.fmtPending(b, me.id);
+        const sent = b.tasks.filter((t) => t.from === me.id && t.status !== 'done').map((t) => ({ id: t.id, type: t.type, to: t.to || null, status: t.status, by: t.by || null, state: H.acceptState(t) }));
+        const awaiting = b.tasks.filter((t) => t.to === me.id && t.status === 'open').map((t) => ({ id: t.id, type: t.type, from: t.from, text: t.text }));
+        return this.print(`${this.note()}Sala: ${me.room} · você: ${me.id}\n${rel.map((s) => H.fmtSession(s, me)).join('\n')}${others ? `\n(+${others} sessão(ões) em outros projetos; use --all)` : ''}${pend ? `\n${pend}` : ''}`, { me, sessions: o.all ? all : rel, pending: { sent, awaiting } });
       }
       case 'status': {
         const text = o._.join(' ');
@@ -123,10 +164,28 @@ class Cli {
         return this.print(`${this.note()}Status: ${s.doing || '(vazio)'}`, { session: s });
       }
       case 'send': {
-        const text = o._.join(' ').trim() || o.text;
+        let text = o._.join(' ').trim() || o.text;
         if (!text) throw new Error('Escreva a mensagem: send "texto"');
-        const m = hub.post(me.room, me, { text, to: o.to, type: o.type || 'chat', files: list(o.files), ref: o.ref });
-        return this.print(`${this.note()}Enviada ${m.id} (${m.type})${m.toName ? ` para ${m.toName}` : ' para a sala'}.${m.redacted ? ` ${m.redacted} segredo(s) foram removidos do texto.` : ''}`, { message: m });
+        const type = o.type || 'chat';
+        let data;
+        if (type === 'handoff') {
+          const h = {};
+          const extra = [];
+          for (const [k, label] of HANDOFF_FIELDS) if (o[k] && o[k] !== true) { h[k] = String(o[k]); extra.push(`- ${label}: ${o[k]}`); }
+          if (extra.length) text = `${text}\n${extra.join('\n')}`;
+          const missing = HANDOFF_FIELDS.filter(([k, , re]) => !h[k] && !re.test(text)).map(([k, label]) => `${label} (--${k})`);
+          if (missing.length) this.warnings.push(`handoff sem: ${missing.join(', ')}. O outro agente precisa disso para continuar; mande um complemento com send --ref <id>.`);
+          if (Object.keys(h).length) data = { handoff: h };
+        }
+        const m = hub.post(me.room, me, { text, to: o.to, type, files: list(o.files), ref: o.ref, data });
+        const wait = type === 'task' || type === 'handoff' ? ` Status: enviado, aguardando ${m.toName || 'o outro agente'} assumir (ele roda "ack ${m.id}"). Veja em "tasks"/"who"; não diga ao usuário que foi assumido antes disso.` : '';
+        return this.print(`${this.note()}Enviada ${m.id} (${m.type})${m.toName ? ` para ${m.toName}` : ' para a sala'}.${wait}${m.redacted ? ` ${m.redacted} segredo(s) foram removidos do texto.` : ''}`, { message: m, ...(wait ? { state: 'enviado' } : {}) });
+      }
+      case 'room': {
+        const to = o._[0];
+        if (!to) return this.print(`${this.note()}Sua sala: ${me.room}${me.room === me.projectRoom ? ' (sala do projeto)' : ` (sala do projeto: ${me.projectRoom})`}`, { room: me.room, projectRoom: me.projectRoom });
+        const s = hub.touch(me.id, { room: to });
+        return this.print(`${this.note()}Agora você está na sala ${s.room} (${s.id}).`, { session: s });
       }
       case 'share': {
         const summary = o.summary || o._.join(' ').trim();
@@ -137,17 +196,27 @@ class Cli {
       }
       case 'read': {
         const wait = o.wait !== undefined ? Math.max(0, Math.min(600, Number(o.wait) || 0)) : 0;
-        const r = wait ? await hub.waitFor(me.id, { since: o.since, all: !!o.all }, wait) : hub.readFor(me.id, { since: o.since, all: !!o.all });
-        const txt = r.messages.length ? r.messages.map((m) => H.fmtMessage(m, me.id)).join('\n') : wait ? `Nenhuma mensagem nova em ${wait} s.` : 'Nenhuma mensagem nova.';
-        return this.print(`${this.note()}${txt}`, { room: r.room, messages: r.messages });
+        const opts = { since: o.since, all: !!o.all, limit: o.limit ? Number(o.limit) : undefined };
+        const r = wait ? await hub.waitFor(me.id, opts, wait) : hub.readFor(me.id, opts);
+        let txt = r.messages.length ? r.messages.map((m) => H.fmtMessage(m, me.id)).join('\n') : wait ? `Nenhuma mensagem nova em ${wait} s.` : 'Nenhuma mensagem nova.';
+        if (r.more) txt += `\n(há mais ${r.more} mensagens, rode read de novo${o.since ? ' com --since a partir da última' : ''})`;
+        return this.print(`${this.note()}${txt}`, { room: r.room, messages: r.messages, more: r.more || 0 });
       }
       case 'tasks': {
         const b = hub.board(me.room);
         return this.print(`${this.note()}${H.fmtBoard(b)}`, b);
       }
+      case 'ack':
       case 'claim': {
-        const r = hub.claim(me.id, { ref: o._[0], files: list(o.files), text: o.note, force: !!o.force });
-        return this.print(`${this.note()}${r.already ? `A tarefa ${r.task.id} já é sua.` : r.task ? `Tarefa ${r.task.id} é sua agora. Conclua com: done ${r.task.id} "resultado"` : `Reservado (${r.msg.id}): ${r.msg.files.join(', ')}. Libere com: done ${r.msg.id} "ok"`}`, { task: r.task, message: r.msg });
+        const ref = o._[0];
+        if (cmd === 'ack' && !ref) throw new Error('Informe o id da task/handoff: ack <m_id> ["nota"]');
+        const note = o.note || (cmd === 'ack' ? o._.slice(1).join(' ').trim() || undefined : undefined);
+        const r = hub.claim(me.id, { ref, files: list(o.files), text: note, force: !!o.force });
+        const files = r.files?.length ? ` Arquivos reservados para você: ${H.fmtFiles(r.files)}.` : '';
+        const txt = r.already ? (r.task ? `A tarefa ${r.task.id} já é sua.${files}` : `Esses arquivos já estão reservados para você.`)
+          : r.task ? `Tarefa ${r.task.id} assumida por você${r.takeover ? ' (a sessão anterior tinha expirado; a transferência ficou registrada)' : ''}.${files} Conclua com: done ${r.task.id} "resultado"`
+          : `Reservado (${r.msg.id}): ${H.fmtFiles(r.msg.files)}. Libere com: done ${r.msg.id} "ok"`;
+        return this.print(`${this.note()}${txt}`, { task: r.task, message: r.msg, files: r.files || [], takeover: r.takeover || null, already: !!r.already });
       }
       case 'done': {
         let ref = o._[0], text = o._.slice(1).join(' ');
@@ -158,9 +227,8 @@ class Cli {
       case 'leave': {
         hub.leave(me.id);
         const st = this.state();
-        if (st.byTool) for (const k of Object.keys(st.byTool)) if (st.byTool[k].id === me.id) delete st.byTool[k];
-        if (st.last?.id === me.id) delete st.last;
-        hub.writeAtomic(this.stateFile, JSON.stringify(st, null, 2));
+        st.recent = st.recent.filter((x) => x.id !== me.id);
+        this.saveState(st);
         return this.print(`Saiu da sala (${me.id}).`, { left: me.id });
       }
       default:
@@ -195,7 +263,7 @@ async function main(argv, { out = (s) => process.stdout.write(`${s}\n`), err = (
   } catch (e) {
     if (o.json) out(JSON.stringify({ error: e.message, code: e.code || null }));
     else err(`Erro: ${e.message}`);
-    return e.code === 'ECLAIMED' || e.code === 'ECONFLICT' || e.code === 'EDONE' ? 3 : 1;
+    return e.code === 'ECLAIMED' || e.code === 'ECONFLICT' || e.code === 'EDONE' ? 3 : e.code === 'EROOM' ? 4 : 1;
   }
 }
 

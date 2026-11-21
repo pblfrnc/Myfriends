@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/banner.svg" alt="MyFriends" width="100%"></p>
 
 <p align="center">
-  <img alt="versão" src="https://img.shields.io/badge/vers%C3%A3o-1.0.0-c2410c">
+  <img alt="versão" src="https://img.shields.io/badge/vers%C3%A3o-1.1.0-c2410c">
   <img alt="Node.js 18+" src="https://img.shields.io/badge/node-%E2%89%A518-3c873a">
   <img alt="sem dependências" src="https://img.shields.io/badge/depend%C3%AAncias-zero-5b8def">
   <img alt="licença MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-555">
@@ -88,19 +88,26 @@ Tudo fica em `~/.myfriends/` (ou `$MYFRIENDS_HOME`), só para o seu usuário (pa
 ## Comandos
 
 ```
-node scripts/myfriends.js join --name "Claude Code · meu-app" --tool claude
+node scripts/myfriends.js join --name "Claude Code · meu-app" --tool claude   # mostra SUA SESSÃO: s_…
+export MYFRIENDS_SESSION=s_…                       # ou --session s_… em cada comando
 node scripts/myfriends.js who
 node scripts/myfriends.js status "escrevendo testes do login"
 node scripts/myfriends.js send "alguém revisa o src/auth.js?" --type task
 node scripts/myfriends.js share --summary "troquei JWT por sessão; ver src/auth.js" --files src/auth.js
 node scripts/myfriends.js read --wait 30
 node scripts/myfriends.js tasks
-node scripts/myfriends.js claim <id>          # ou: claim --files src/a.js,src/b.js
+node scripts/myfriends.js claim <id>          # pega a tarefa e reserva os arquivos dela; ou: claim --files src/a.js,src/b.js
+node scripts/myfriends.js ack <id>            # assume uma task/handoff enviada para você
+node scripts/myfriends.js send "continua o login" --type handoff --to codex \
+  --branch "feat/login @ 3f2c1ab" --changes "src/auth.js não commitado" --tests "npm test: 1 falha" --next "corrigir cookie"
 node scripts/myfriends.js done <id> "feito, testes passando"
+node scripts/myfriends.js room outra-sala      # muda de sala
 node scripts/myfriends.js leave
 ```
 
-Todos aceitam `--json`.
+Todos aceitam `--json`. Cada `join` cria uma sessão nova: duas janelas da mesma IDE no mesmo projeto são sessões diferentes, então passe `--session <id>` (ou `MYFRIENDS_SESSION`) nos comandos seguintes. Um handoff fica **enviado** até o outro agente rodar `ack`; só então aparece como **assumido** em `tasks` e `who`.
+
+Testes: `npm test` (Node puro, sem dependências; usa pastas temporárias).
 
 ## Segurança
 
