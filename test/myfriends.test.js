@@ -322,12 +322,124 @@ test('7. handoff: campos exigidos, "enviado" vs "assumido" e ack', async () => {
   for (const s of ['branch or commit', 'uncommitted', 'last test run', 'next step', 'enviado, aguardando o outro agente assumir', 'ack <id>', '--session']) assert.ok(md.includes(s), `SKILL.md: ${s}`);
 });
 
+test('sessão expirada retoma a mesma sala e todas as mensagens pendentes', async () => {
+  const ws = project('cursor-expirado');
+  const room = 'cursor-expirado';
+  const a = j(ws, ['join', '--tool', 'codex', '--room', room]).session;
+  const b = j(ws, ['join', '--tool', 'claude', '--room', room]).session;
+  const A = ['--session', a.id], B = ['--session', b.id];
+  hub.post(room, a.id, { text: 'já lida' });
+  assert.strictEqual(j(ws, ['read', ...B]).messages[0].text, 'já lida');
+
+  expire(b.id);
+  assert.ok(!j(ws, ['who', ...A]).sessions.some((s) => s.id === b.id));
+  assert.notStrictEqual(j(ws, ['read', ...B], { allowError: true })._code, 0);
+  const pending = Array.from({ length: 60 }, (_, i) => hub.post(room, a.id, { text: String(i) }).id);
+  assert.strictEqual(j(ws, ['join', ...B]).session.room, room);
+  assert.deepStrictEqual(j(ws, ['read', ...B]).messages.map((m) => m.id), pending);
+  assert.strictEqual(j(ws, ['read', ...B]).messages.length, 0);
+});
+
+function legacyEvent(room, id, omittedFields) {
+  const log = hub.roomFile(room);
+  const lines = fs.readFileSync(log, 'utf8').trimEnd().split('\n');
+  const updated = lines.map((line) => {
+    const event = JSON.parse(line);
+    if (event.id !== id) return line;
+    for (const field of omittedFields) delete event[field];
+    return JSON.stringify(event);
+  });
+  fs.writeFileSync(log, updated.join('\n') + '\n');
+}
+
+test('transferência registrada pelo cliente antigo tem o mesmo dono após a retomada', async () => {
+  const ws = project('transferencia-legada');
+  const a = j(ws, ['join', '--tool', 'codex']).session;
+  const b = j(ws, ['join', '--tool', 'claude']).session;
+  const A = ['--session', a.id], B = ['--session', b.id];
+  const task = j(ws, ['send', 'tarefa', '--type', 'task', '--files', 'src/a.js', ...A]).message;
+  j(ws, ['claim', task.id, ...A]);
+  expire(a.id);
+  const claim = j(ws, ['claim', task.id, ...B]).message;
+  legacyEvent(a.room, claim.id, ['takeover', 'supersedes', 'files']);
+  assert.strictEqual(j(ws, ['tasks', ...B]).tasks[0].by, b.id);
+  j(ws, ['join', ...A]);
+  const board = j(ws, ['tasks', ...A]);
+  assert.strictEqual(board.tasks[0].by, b.id);
+  assert.deepStrictEqual(board.claims.map((c) => [c.by, c.files]), [[b.id, ['src/a.js']]]);
+  assert.strictEqual(j(ws, ['done', task.id, 'resultado', ...A], { allowError: true }).code, 'ECLAIMED');
+});
+
+test('liberar reserva avulsa ou concluir outra tarefa não desprotege arquivo em uso', async () => {
+  const ws = project('reservas-independentes');
+  const a = j(ws, ['join', '--tool', 'codex']).session;
+  const b = j(ws, ['join', '--tool', 'claude']).session;
+  const A = ['--session', a.id], B = ['--session', b.id];
+  const file = 'src/auth.js';
+  const reserve = ['claim', '--files', file];
+  const standalone = j(ws, [...reserve, ...A]).message;
+  const taskIds = ['primeira tarefa', 'segunda tarefa'].map((text) =>
+    j(ws, ['send', text, '--type', 'task', '--files', file, ...A]).message.id);
+  const taskClaims = taskIds.map((id) => j(ws, ['claim', id, ...A]).message);
+  assert.deepStrictEqual(taskClaims.map((claim) => claim.files), [[file], [file]]);
+  // A segunda tarefa já existia antes da correção e não trouxe seus arquivos no claim.
+  legacyEvent(a.room, taskClaims[1].id, ['files']);
+  j(ws, ['done', standalone.id, 'liberado', ...A]);
+  j(ws, ['done', taskIds[0], 'feito', ...A]);
+  assert.strictEqual(j(ws, [...reserve, ...B], { allowError: true }).code, 'ECONFLICT');
+  assert.strictEqual(j(ws, ['done', taskClaims[1].id, 'liberar', ...A], { allowError: true }).code, 'EINVAL');
+  j(ws, ['done', taskIds[1], 'feito', ...A]);
+  assert.deepStrictEqual(j(ws, [...reserve, ...B]).message.files, [file]);
+});
+
+test('read --wait --since mantém o filtro e preserva o cursor normal', async () => {
+  const ws = project('espera-com-filtro');
+  const a = j(ws, ['join', '--tool', 'codex']).session;
+  const b = j(ws, ['join', '--tool', 'claude']).session;
+  const older = hub.post(a.room, a.id, { text: 'antes' });
+  const anchor = hub.post(a.room, a.id, { text: 'marco' });
+  const B = ['--session', b.id];
+  const waiting = runAsync(ws, ['read', '--wait', '5', '--since', anchor.id, ...B, '--json']);
+  await sleep(900);
+  const newer = hub.post(a.room, a.id, { text: 'depois' });
+  const result = await waiting;
+  assert.strictEqual(result.code, 0);
+  assert.deepStrictEqual(JSON.parse(result.out).messages.map((m) => m.id), [newer.id]);
+  assert.deepStrictEqual(j(ws, ['read', ...B]).messages.map((m) => m.id), [older.id, anchor.id, newer.id]);
+});
+
+test('avisos de conclusão chegam ao solicitante em outra sala sem consumir o chat de origem', async () => {
+  const ws = project('avisos-em-outra-sala');
+  const a = j(ws, ['join', '--tool', 'codex']).session;
+  const b = j(ws, ['join', '--tool', 'claude']).session;
+  const A = ['--session', a.id], B = ['--session', b.id];
+  const tasks = ['primeira tarefa', 'segunda tarefa'].map((text) =>
+    j(ws, ['send', text, '--type', 'task', '--to', b.id, ...A]).message.id);
+  for (const id of tasks) j(ws, ['ack', id, ...B]);
+  assert.strictEqual(j(ws, ['read', ...A]).messages.length, 2);
+  j(ws, ['room', 'outro-projeto', ...A]);
+  const chat = j(ws, ['send', 'só na sala original', ...B]).message;
+  expire(a.id);
+  const results = tasks.map((id) => j(ws, ['done', id, 'parecer pronto', ...B]).message);
+  assert.ok(results.every((message) => message.to === a.id));
+  assert.strictEqual(j(ws, ['join', ...A]).session.room, 'outro-projeto');
+  const first = j(ws, ['read', '--limit', '1', ...A]);
+  assert.deepStrictEqual(first.messages.map((m) => m.id), [results[0].id]);
+  assert.strictEqual(first.more, 1);
+  const second = j(ws, ['read', ...A]);
+  assert.deepStrictEqual(second.messages.map((m) => m.id), [results[1].id]);
+  assert.strictEqual(second.messages[0].room, a.room);
+  assert.strictEqual(second.more, 0);
+  j(ws, ['room', a.room, ...A]);
+  assert.deepStrictEqual(j(ws, ['read', ...A]).messages.map((m) => m.id), [chat.id]);
+});
+
 // ------------------------------------------------------------------ versão
-test('versão 1.1.0 no hub, README e CHANGELOG', async () => {
-  assert.strictEqual(H.VERSION, '1.1.0');
-  assert.ok(fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').includes('vers%C3%A3o-1.1.0'));
-  assert.ok(/## 1\.1\.0/.test(fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8')));
-  assert.strictEqual(require('../package.json').version, '1.1.0');
+test('versão do pacote é a mesma no hub, README e CHANGELOG', async () => {
+  const version = require('../package.json').version;
+  assert.strictEqual(H.VERSION, version);
+  assert.ok(fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8').includes('vers%C3%A3o-' + version));
+  assert.ok(fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8').includes('## ' + version + ' —'));
 });
 
 (async () => {

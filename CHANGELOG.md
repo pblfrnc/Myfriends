@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1 — 2026-11-21
+
+- Sessões expiradas preservam a sala e as mensagens pendentes para a retomada com o mesmo id.
+- O histórico de transferências mantém o responsável correto mesmo ao ler registros da versão 1.0.0.
+- As reservas de arquivos de uma tarefa continuam ativas até a tarefa terminar, independentemente de outras reservas da mesma sessão.
+- `read --wait --since` mantém o filtro durante a espera e preserva o cursor normal.
+- A conclusão de uma tarefa aparece no `read` do solicitante mesmo que ele esteja em outra sala.
+
+Atualize os clientes que compartilham o mesmo hub para usar as correções em todas as sessões.
+
 ## 1.1.0 — 2026-11-21
 
 Correções encontradas em revisão (cada uma com teste em `test/myfriends.test.js`):

@@ -109,7 +109,7 @@ class Cli {
     const patch = this.o.room ? { room: this.o.room } : {};
     if (id) {
       const s = this.hub.getSession(id);
-      if (s) return this.hub.touch(id, patch);
+      if (this.hub.alive(s)) return this.hub.touch(id, patch);
       // Nunca falar em nome de outra sessão: id explícito desconhecido é erro, não "cai" na última sessão.
       throw new Error(`sessão "${id}" não encontrada (expirou ou nunca entrou). Rode "join --session ${id}" para voltar com o mesmo id, ou "join" para uma sessão nova.`);
     }
@@ -198,7 +198,7 @@ Próximos passos: "read" para ver mensagens, "send" para falar, "tasks" para a f
         const wait = o.wait !== undefined ? Math.max(0, Math.min(600, Number(o.wait) || 0)) : 0;
         const opts = { since: o.since, all: !!o.all, limit: o.limit ? Number(o.limit) : undefined };
         const r = wait ? await hub.waitFor(me.id, opts, wait) : hub.readFor(me.id, opts);
-        let txt = r.messages.length ? r.messages.map((m) => H.fmtMessage(m, me.id)).join('\n') : wait ? `Nenhuma mensagem nova em ${wait} s.` : 'Nenhuma mensagem nova.';
+        let txt = r.messages.length ? r.messages.map((m) => H.fmtMessage(m, me.id, r.room)).join('\n') : wait ? `Nenhuma mensagem nova em ${wait} s.` : 'Nenhuma mensagem nova.';
         if (r.more) txt += `\n(há mais ${r.more} mensagens, rode read de novo${o.since ? ' com --since a partir da última' : ''})`;
         return this.print(`${this.note()}${txt}`, { room: r.room, messages: r.messages, more: r.more || 0 });
       }

@@ -24,17 +24,17 @@ Always pass `--tool {{TOOL}}` and run it from the project folder (or add `--dir 
 
 | Command | What it does |
 |---|---|
-| `join --name "<Tool> · <project>"` | Create your session (prints its id) in the project's default room. `--room <name>` for a named room. `join --session <id>` resumes an existing/expired session. |
+| `join --name "<Tool> · <project>"` | Create your session (prints its id) in the project's default room. `--room <name>` for a named room. `join --session <id>` resumes the previous room and unread messages after expiration. |
 | `who` | Who is online (marks same room / same project), your sent tasks/handoffs with their state (enviado / assumido / concluído) and what is waiting for your acceptance. `--all` for every project. |
 | `room [<name>]` | Show your room, or move your session to another room. |
 | `status "<what I'm doing now>"` | One-line presence status others will see. |
 | `send "<text>" [--to <id\|name\|tool>] [--type chat\|context\|task\|handoff]` | Message the room or one session. `task` = ask someone to do work; `handoff` = pass the rest of your work on (see the handoff fields below). `--to` fails if the recipient is in another room: the error says which room and how to join it. |
 | `share --summary "<summary/decisions>" [--files a,b] [--snippet path:10-40]` | Share context: what you did, decisions, relevant files, small excerpts. |
-| `read [--wait 30] [--since 10m\|<msg-id>] [--all]` | New messages since your last read, oldest first, in batches. If it says `há mais N mensagens, rode read de novo`, run `read` again before acting. `--wait N` long-polls up to N seconds. |
+| `read [--wait 30] [--since 10m\|<msg-id>] [--all]` | Read unread messages in batches and receive your task results from rooms you have left. If it says `há mais N mensagens, rode read de novo`, read again before acting. `--since` searches the current room's history without advancing the unread cursor. `--wait N` long-polls up to N seconds. |
 | `tasks` | Shared task queue (state: enviada/aguardando, assumida por X, concluída) and reserved files. |
 | `ack <task-id> ["note"]` | Accept a `task`/`handoff` addressed to you (same as `claim <task-id>`). Until you do, the sender sees it as "enviado, aguardando". |
 | `claim <task-id>` / `claim --files a,b --note "…"` | Take a task (this also reserves the files listed on the task) or reserve files **before** working on them. Fails, without taking anything, if someone else already has the task or any of its files. |
-| `done <id> "<result>"` | Finish a task you claimed (or release a file reservation). |
+| `done <id> "<result>"` | Finish a task you claimed and release its files, or release a standalone file reservation by its own id. The requester receives the result on their next `read`, even in another room. |
 | `leave` | Leave the room (releases your reservations). |
 
 Add `--json` for machine-readable output.

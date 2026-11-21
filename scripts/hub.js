@@ -13,7 +13,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 const TOOLS = ['lastgravity', 'claude', 'codex', 'antigravity', 'outro'];
 const TOOL_LABEL = { lastgravity: 'LastGravity', claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', outro: 'Agente' };
 const TYPES = ['chat', 'context', 'task', 'claim', 'done', 'handoff'];
@@ -35,6 +35,7 @@ const sleepSync = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuf
 let seq = 0;
 const newMsgId = () => `m_${Date.now().toString(36)}${(seq++ % 1296).toString(36).padStart(2, '0')}${rand(3)}`;
 const err = (msg, code) => Object.assign(new Error(msg), code ? { code } : {});
+const claimPath = (file) => String(file).replace(/\\/g, '/').replace(/^\.\//, '');
 
 function defaultHome() { return process.env.MYFRIENDS_HOME || path.join(os.homedir(), '.myfriends'); }
 
@@ -189,7 +190,7 @@ class Hub {
 
   alive(s) { return !!s && now() - (s.lastSeen || 0) <= this.staleMs && pidAlive(s.pid); }
 
-  // Lista sessões vivas e apaga as mortas (pid inexistente ou lastSeen > 10 min).
+  // Sessões expiradas saem da lista, mas guardam sala e cursor para uma retomada pelo mesmo id.
   sessions({ clean = true } = {}) {
     this.init();
     let files = [];
@@ -197,13 +198,14 @@ class Hub {
     const out = [];
     for (const f of files) {
       const s = this.readJson(this.p('sessions', f));
-      if (s && this.alive(s)) { out.push(s); continue; }
+      if (s) {
+        if (this.alive(s)) out.push(s);
+        continue;
+      }
       if (clean) {
-        // não apaga arquivos recém-criados que ainda estão sendo escritos
-        try { if (!s && now() - fs.statSync(this.p('sessions', f)).mtimeMs < 5000) continue; } catch {}
-        const id = f.slice(0, -5);
+        // Não descarta o cursor se o agente voltar com este id.
+        try { if (now() - fs.statSync(this.p('sessions', f)).mtimeMs < 5000) continue; } catch {}
         try { fs.unlinkSync(this.p('sessions', f)); } catch {}
-        try { fs.unlinkSync(this.p('cursors', `${id}.json`)); } catch {}
       }
     }
     return out.sort((a, b) => a.startedAt - b.startedAt);
@@ -356,31 +358,44 @@ class Hub {
   // null = esta sessão ainda não tem cursor nesta sala.
   getCursor(id, room) { const v = (this.readJson(this.cursorFile(id), {}) || {})[room]; return Number.isInteger(v) && v >= 0 ? v : null; }
   setCursor(id, room, offset) {
-    const f = this.cursorFile(id);
-    const c = this.readJson(f, {}) || {};
-    c[room] = offset;
-    this.writeAtomic(f, JSON.stringify(c));
+    const file = this.cursorFile(id);
+    return this.withLock(file, () => {
+      const cursors = this.readJson(file, {}) || {};
+      cursors[room] = offset;
+      this.writeAtomic(file, JSON.stringify(cursors));
+    });
   }
   // Primeiro cursor numa sala: começa nas últimas HISTORY mensagens; tudo o que chegar depois é entregue.
-  initCursor(id, room) {
+  initialOffset(room) {
     const { ends } = this.readRaw(room, 0);
-    const at = ends.length > HISTORY ? ends[ends.length - HISTORY - 1] : 0;
-    this.setCursor(id, room, at);
-    return at;
+    return ends.length > HISTORY ? ends[ends.length - HISTORY - 1] : 0;
+  }
+  initCursor(id, room) {
+    const file = this.cursorFile(id);
+    return this.withLock(file, () => {
+      const cursors = this.readJson(file, {}) || {};
+      if (Number.isInteger(cursors[room]) && cursors[room] >= 0) return cursors[room];
+      cursors[room] = this.initialOffset(room);
+      this.writeAtomic(file, JSON.stringify(cursors));
+      return cursors[room];
+    });
   }
 
   // Novas mensagens para a sessão (exceto as dela mesma). Por padrão: para todos ou para ela.
   // Entrega das mais antigas para as mais novas, no máximo `limit` (e ~maxChars) por vez; o cursor
   // avança só até a última entregue e `more` diz quantas ainda faltam.
   readFor(id, { room, since, all = false, mark = true, limit = READ_BATCH, maxChars = 0 } = {}) {
-    const me = this.getSession(id);
-    if (!me) throw err('Sessão não encontrada: entre na sala com "join" primeiro.', 'ENOSESSION');
-    room = normRoom(room || me.room);
     limit = Math.max(1, Math.min(1000, Number(limit) || READ_BATCH));
     const wanted = (m) => m.from !== id && (all || !m.to || m.to === id);
     const sizeOf = (m) => (m.text || '').length + JSON.stringify(m.files || []).length + (m.snippets || []).reduce((n, sn) => n + sn.text.length + 40, 0) + 80;
+    const getRoom = () => {
+      const me = this.getSession(id);
+      if (!me) throw err('Sessão não encontrada: entre na sala com "join" primeiro.', 'ENOSESSION');
+      return normRoom(room || me.room);
+    };
     if (since !== undefined && since !== null && since !== '') {
       // Consulta pelo histórico: não mexe no cursor.
+      const room = getRoom();
       const list = filterSince(this.readRaw(room, 0).messages, since).filter(wanted);
       const out = [];
       let chars = 0;
@@ -392,25 +407,50 @@ class Hub {
       }
       return { room, messages: out, more: list.length - out.length };
     }
-    let start = this.getCursor(id, room);
-    if (start === null) start = this.initCursor(id, room);
-    const { messages, ends, offset } = this.readRaw(room, start);
-    const out = [];
-    let cursor = offset, more = 0, full = false, chars = 0;
-    for (let i = 0; i < messages.length; i++) {
-      const m = messages[i];
-      if (!wanted(m)) continue;
-      if (full) { more++; continue; }
-      const x = this.expand(m);
-      if (out.length >= limit || (maxChars && out.length && chars + sizeOf(x) > maxChars)) {
-        full = true; more++;
-        cursor = i > 0 ? ends[i - 1] : start;
-        continue;
+    const file = this.cursorFile(id);
+    const read = () => {
+      const room = getRoom();
+      const cursors = this.readJson(file, {}) || {};
+      const results = cursors.$results || {};
+      const isResult = (m) => m.type === 'done' && m.to === id && m.from !== id;
+      const out = [];
+      let more = 0, chars = 0;
+
+      // O resultado existe apenas na sala da tarefa. Cada sala visitada tem um cursor
+      // separado para esses avisos, de modo que lê-los de fora não consome a conversa.
+      const readRoom = (source, start, include) => {
+        const { messages, ends, offset } = this.readRaw(source, start);
+        let next = offset;
+        for (let i = 0; i < messages.length; i++) {
+          if (!include(messages[i], ends[i])) continue;
+          if (!more && out.length < limit) {
+            const full = this.expand(messages[i]);
+            const size = maxChars ? sizeOf(full) : 0;
+            if (!maxChars || !out.length || chars + size <= maxChars) {
+              out.push(full);
+              chars += size;
+              continue;
+            }
+          }
+          if (next === offset) next = i > 0 ? ends[i - 1] : Math.min(start, offset);
+          more++;
+        }
+        return next;
+      };
+
+      // Avisos diretos chegam mesmo se o solicitante estiver em outra sala ou voltar
+      // depois de expirar. Uma segunda leitura na sala de origem não os repete.
+      for (const origin of Object.keys(cursors)) {
+        if (origin === room || !ROOM_RE.test(origin) || !Number.isInteger(cursors[origin])) continue;
+        const start = Math.max(cursors[origin], results[origin] || 0);
+        results[origin] = readRoom(origin, start, isResult);
       }
-      out.push(x); chars += sizeOf(x);
-    }
-    if (mark) this.setCursor(id, room, cursor);
-    return { room, messages: out, more };
+      const start = cursors[room] ?? this.initialOffset(room);
+      cursors[room] = readRoom(room, start, (m, end) => wanted(m) && (!isResult(m) || end > (results[room] || 0)));
+      if (mark) this.writeAtomic(file, JSON.stringify({ ...cursors, $results: results }));
+      return { room, messages: out, more };
+    };
+    return mark ? this.withLock(file, read) : read();
   }
 
   // Long-poll: espera até haver mensagens novas (fs.watch + verificação periódica de segurança).
@@ -423,16 +463,23 @@ class Hub {
     this.ensureDir(dir);
     const deadline = now() + Math.min(seconds, 600) * 1000;
     let lastBeat = now();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let watcher = null, timer = null, done = false;
-      const finish = (res) => { if (done) return; done = true; clearInterval(timer); try { watcher?.close(); } catch {} resolve(res); };
+      const finish = (res, error) => {
+        if (done) return;
+        done = true;
+        clearInterval(timer);
+        try { watcher?.close(); } catch {}
+        if (error) reject(error);
+        else resolve(res);
+      };
       const check = () => {
         if (done) return;
         try {
           if (now() - lastBeat > 60000) { this.touch(id); lastBeat = now(); }
-          const res = this.readFor(id, { ...opts, since: undefined });
+          const res = this.readFor(id, opts);
           if (res.messages.length || now() >= deadline) finish(res);
-        } catch (e) { finish({ room, messages: [], error: e.message }); }
+        } catch (e) { finish(null, e); }
       };
       try { watcher = fs.watch(dir, () => setTimeout(check, 20)); watcher.on('error', () => {}); } catch {}
       timer = setInterval(check, 400);
@@ -443,7 +490,7 @@ class Hub {
   // Deriva o quadro de tarefas e as reservas de arquivos a partir das mensagens da sala.
   // Regras (o log é a fonte da verdade, então uma sessão que volta não "recupera" o que foi passado adiante):
   //  - claim de tarefa aberta (ou da própria) → a tarefa é de quem pegou e os arquivos dela ficam reservados;
-  //  - claim com "takeover" (gravado quando o dono anterior tinha expirado) → transfere a tarefa de vez;
+  //  - claim de outro dono no log transfere a tarefa, inclusive em logs anteriores a "takeover";
   //  - claim com "supersedes" → as reservas listadas (de sessões que expiraram) deixam de valer para sempre;
   //  - done → conclui a tarefa e libera as reservas de quem concluiu.
   board(room, live = null) {
@@ -456,7 +503,6 @@ class Hub {
     const liveIds = new Set((live || this.sessions()).map((s) => s.id));
     const { messages } = this.readRaw(room, 0);
     const tasks = new Map(), claims = new Map();
-    const take = (t, m, extra = {}) => Object.assign(t, { status: 'claimed', by: m.from, byName: m.fromName, claimedAt: m.ts, claimMsg: m.id }, extra);
     for (let m of messages) {
       // Linhas grandes guardam só um resumo: a lista completa de arquivos está no blob.
       if (m.blob && (m.type === 'task' || m.type === 'handoff' || m.type === 'claim')) m = this.expand(m);
@@ -465,24 +511,38 @@ class Hub {
       } else if (m.type === 'claim') {
         for (const cid of m.supersedes || []) { const c = claims.get(cid); if (c) { c.active = false; c.supersededBy = m.id; } }
         const t = m.ref && tasks.get(m.ref);
+        const files = new Set((m.files || []).map(claimPath));
         if (t && t.status !== 'done') {
-          if (m.takeover) {
-            if (t.status === 'open' || t.by === m.takeover || t.by === m.from) {
-              const prevName = t.by === m.takeover ? t.byName : undefined;
-              for (const c of claims.values()) if (c.by === m.takeover && c.task === t.id) { c.active = false; c.supersededBy = m.id; }
-              take(t, m, { takeoverFrom: m.takeover, takeoverFromName: prevName || t.takeoverFromName });
+          const previous = t.by || m.takeover;
+          if (previous && previous !== m.from) {
+            t.takeoverFrom = previous;
+            t.takeoverFromName = t.byName;
+            for (const c of claims.values()) {
+              if (c.by === previous && c.task === t.id) { c.active = false; c.supersededBy = m.id; }
             }
-          } else if (t.status === 'open' || t.by === m.from || !liveIds.has(t.by)) take(t, m); // !live: logs da 1.0.0
+          }
+          Object.assign(t, { status: 'claimed', by: m.from, byName: m.fromName, claimedAt: m.ts });
+
+          // Logs antigos podiam omitir arquivos já reservados pelo mesmo agente
+          // em outra tarefa ou em uma reserva avulsa. A tarefa tem sua própria reserva.
+          const reserved = new Set([...claims.values()]
+            .filter((c) => c.active && c.by === m.from && c.task === t.id)
+            .flatMap((c) => c.files));
+          for (const file of (t.files || []).map(claimPath)) {
+            if (!reserved.has(file)) files.add(file);
+          }
         }
-        if (m.files?.length) claims.set(m.id, { id: m.id, by: m.from, byName: m.fromName, files: m.files, text: m.text, ts: m.ts, task: m.ref || null, active: true });
+        if (files.size) claims.set(m.id, { id: m.id, by: m.from, byName: m.fromName, files: [...files], text: m.text, ts: m.ts, task: m.ref || null, active: true });
       } else if (m.type === 'done') {
         const t = m.ref && tasks.get(m.ref);
         if (t && t.status !== 'done') Object.assign(t, { status: 'done', by: m.from, byName: m.fromName, result: m.text, doneAt: m.ts });
-        for (const c of claims.values()) if (c.by === m.from && (c.id === m.ref || (m.ref && c.task === m.ref) || !m.ref)) c.active = false;
+        for (const c of claims.values()) {
+          if (c.by !== m.from) continue;
+          if (c.task ? c.task === m.ref : !m.ref || c.id === m.ref) c.active = false;
+        }
       }
     }
     for (const t of tasks.values()) {
-      delete t.claimMsg;
       // enviado (ninguém assumiu) → assumido (claim/ack do outro agente) → concluido
       if (t.status === 'claimed' && !liveIds.has(t.by)) {
         Object.assign(t, { status: 'open', abandonedBy: t.byName, abandonedById: t.by });
@@ -526,13 +586,12 @@ class Hub {
         // Dono anterior expirou: a transferência fica registrada e ele não recupera a tarefa se voltar.
         if (task.status === 'open' && task.abandonedById && task.abandonedById !== id) takeover = task.abandonedById;
       }
-      const norm = (f) => String(f).replace(/\\/g, '/').replace(/^\.\//, '');
-      const fl = [...new Set([...(files || []), ...(task?.files || [])].map(norm).filter(Boolean))];
+      const fl = [...new Set([...(files || []), ...(task?.files || [])].map(claimPath).filter(Boolean))];
       if (fl.length && !force) {
         const busy = [];
         for (const c of b.claims) {
           if (c.by === id) continue;
-          const mine = new Set(c.files.map(norm));
+          const mine = new Set(c.files);
           for (const f of fl) if (mine.has(f)) busy.push(`${f} (${c.byName}, ${c.by})`);
         }
         if (busy.length) {
@@ -540,13 +599,14 @@ class Hub {
           throw err(`${what}: ${fmtFiles(busy, 10)}. Combine na sala ou use --force.`, 'ECONFLICT');
         }
       }
-      // Arquivos que já são meus não precisam de nova reserva.
-      const mineNow = new Set(b.claims.filter((c) => c.by === id).flatMap((c) => c.files.map(norm)));
+      // Uma reserva só serve para a tarefa que a criou ou para o escopo avulso.
+      const scope = task?.id || null;
+      const mineNow = new Set(b.claims.filter((c) => c.by === id && c.task === scope).flatMap((c) => c.files));
       const add = fl.filter((f) => !mineNow.has(f));
       if (task && task.status === 'claimed' && task.by === id && !add.length) return { already: true, task, msg: null, files: fl };
       if (!task && !add.length) return { already: true, task: null, msg: null, files: fl };
       const addSet = new Set(add);
-      const supersedes = b.dormant.filter((c) => (task && c.task === task.id) || c.files.some((f) => addSet.has(norm(f)))).map((c) => c.id);
+      const supersedes = b.dormant.filter((c) => (task && c.task === task.id) || c.files.some((f) => addSet.has(f))).map((c) => c.id);
       const { msg, line } = this._build(room, me, {
         type: 'claim', ref: task?.id, files: add.length ? add : undefined, takeover, supersedes,
         text: text || (task ? `Assumi a tarefa: ${task.text.slice(0, 120)}` : `Vou mexer em: ${fmtFiles(add, 10)}`),
@@ -569,6 +629,7 @@ class Hub {
           const c = b.claims.find((x) => x.id === ref || (String(ref).length >= 6 && x.id.startsWith(ref)));
           if (!c) throw err(`Tarefa ou reserva não encontrada (ou não está mais ativa): ${ref}.`, 'ENOENT');
           if (c.by !== id) throw err(`A reserva ${c.id} é de ${c.byName}.`, 'ENOTYOURS');
+          if (c.task) throw err(`A reserva pertence à tarefa ${c.task}. Use "done ${c.task}" para concluir a tarefa e liberar os arquivos.`, 'EINVAL');
           claimRef = c.id;
         } else {
           if (task.status === 'done') throw err(`A tarefa ${task.id} já foi concluída por ${task.byName}.`, 'EDONE');
@@ -576,7 +637,10 @@ class Hub {
           if (task.status === 'open' && task.takeoverFrom === id) throw err(`A tarefa ${task.id} foi assumida por outra sessão enquanto a sua estava expirada; não é mais sua.`, 'ECLAIMED');
         }
       }
-      const { msg, line } = this._build(room, me, { type: 'done', ref: task?.id || claimRef || undefined, text: text || 'Concluído.', files, to: task && task.from !== id ? this.getSession(task.from) || undefined : undefined });
+      // O solicitante pode estar em outra sala ou offline. O id do autor no log
+      // basta para endereçar o aviso sem duplicar o evento que conclui a tarefa.
+      const to = task && task.from !== id ? { id: task.from, name: task.fromName } : undefined;
+      const { msg, line } = this._build(room, me, { type: 'done', ref: task?.id || claimRef || undefined, text: text || 'Concluído.', files, to });
       this._append(room, line);
       return { task, msg };
     });
@@ -616,10 +680,11 @@ function fmtSession(s, me) {
   const flags = [s.id === me?.id ? 'você' : '', me && s.room === me.room && s.id !== me.id ? 'mesma sala' : '', me && s.folder === me.folder && s.room !== me.room ? 'mesmo projeto' : ''].filter(Boolean);
   return `● ${s.id}  ${s.name}  [${s.tool}${s.kind === 'human' ? ', pessoa' : ''}]  sala ${s.room}${s.doing ? `  — ${s.doing}` : ''}  (visto há ${ago(s.lastSeen)})${flags.length ? `  ‹${flags.join(', ')}›` : ''}`;
 }
-function fmtMessage(m, meId) {
+function fmtMessage(m, meId, room) {
   const to = m.to ? ` → ${m.to === meId ? 'você' : m.toName}` : '';
   const ref = m.ref ? ` [ref ${m.ref}]` : '';
-  let s = `[${m.id}] ${hhmm(m.ts)} ${m.fromName} (${m.tool})${to} · ${m.type}${ref}: ${m.text}`;
+  const origin = room && m.room !== room ? ` [sala ${m.room}]` : '';
+  let s = `[${m.id}] ${hhmm(m.ts)} ${m.fromName} (${m.tool})${to} · ${m.type}${ref}${origin}: ${m.text}`;
   if (m.files?.length) s += `\n    arquivos: ${fmtFiles(m.files, 20)}`;
   for (const sn of m.snippets || []) s += `\n    --- ${sn.path}${sn.lines ? `:${sn.lines}` : ''}\n${sn.text.split('\n').map((l) => `    ${l}`).join('\n')}`;
   if (m.redacted) s += `\n    (${m.redacted} segredo(s) removido(s) automaticamente)`;

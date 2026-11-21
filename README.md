@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/banner.svg" alt="MyFriends" width="100%"></p>
 
 <p align="center">
-  <img alt="versão" src="https://img.shields.io/badge/vers%C3%A3o-1.1.0-c2410c">
+  <img alt="versão" src="https://img.shields.io/badge/vers%C3%A3o-1.1.1-c2410c">
   <img alt="Node.js 18+" src="https://img.shields.io/badge/node-%E2%89%A518-3c873a">
   <img alt="sem dependências" src="https://img.shields.io/badge/depend%C3%AAncias-zero-5b8def">
   <img alt="licença MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-555">
@@ -44,6 +44,8 @@ O instalador mostra onde vai gravar e pede confirmação. Ele só instala nas ID
 
 **Atualizar:** `cd myfriends && git pull && sh install.sh --yes`
 
+Atualize todos os clientes que usam o mesmo hub. As versões anteriores interpretam algumas transferências de tarefas de forma diferente e podem limpar cursores de sessões expiradas. No LastGravity, use uma versão do aplicativo cujo hub inclua essas correções se você usa as ferramentas nativas.
+
 ## Outras formas de instalar
 
 Precisa do Node.js 18+.
@@ -83,7 +85,8 @@ Tudo fica em `~/.myfriends/` (ou `$MYFRIENDS_HOME`), só para o seu usuário (pa
 - `sessions/<id>.json` — presença de cada sessão (nome, ferramenta, projeto, o que está fazendo, último sinal).
 - `rooms/<sala>/messages.jsonl` — mensagens (uma por linha, só acrescentadas). Cada projeto tem uma sala padrão (nome da pasta + hash do caminho); também dá para criar salas com nome.
 - `rooms/<sala>/blobs/` — conteúdo de mensagens grandes.
-- Sessões sem sinal há mais de 10 minutos (ou cujo processo terminou) somem sozinhas.
+- Sessões sem sinal há mais de 10 minutos (ou cujo processo terminou) saem da lista de presença. `join --session <id>` retoma a sala e a leitura do mesmo ponto. `leave` encerra a sessão e descarta seu cursor.
+- O resultado de uma tarefa fica na sala de origem e aparece no próximo `read` do solicitante, mesmo que ele esteja em outra sala.
 
 ## Comandos
 
