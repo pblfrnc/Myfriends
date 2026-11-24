@@ -21,5 +21,6 @@
     "mcp",
     "agents",
     "myfriends"
-  ]
+  ],
+  "icon": "./assets/logo-512.png"
 }
