@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const home = () => process.env.MYFRIENDS_TARGET_HOME || os.homedir();
-const appData = (h) => process.env.APPDATA || path.join(h, 'AppData', 'Roaming');
+const appData = (h) => (process.env.APPDATA && !process.env.MYFRIENDS_TARGET_HOME ? process.env.APPDATA : path.join(h, 'AppData', 'Roaming'));
 const macSupport = (h) => path.join(h, 'Library', 'Application Support');
 const xdg = (h) => process.env.XDG_CONFIG_HOME && !process.env.MYFRIENDS_TARGET_HOME ? process.env.XDG_CONFIG_HOME : path.join(h, '.config');
 const userDir = (h, app) => process.platform === 'darwin' ? path.join(macSupport(h), app) : process.platform === 'win32' ? path.join(appData(h), app) : path.join(xdg(h), app);
