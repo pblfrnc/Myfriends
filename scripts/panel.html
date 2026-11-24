@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyFriends — painel</title>
+<style>
+:root{--bg:#f7f6f3;--panel:#fff;--ink:#1c1b19;--muted:#6b6862;--line:#e6e3dc;--accent:#c2410c;--accent-soft:#fbe9df;--ok:#15803d;--warn:#b45309;--chip:#f1efe9;--code:#f4f2ee}
+@media (prefers-color-scheme:dark){:root{--bg:#121316;--panel:#1a1b1f;--ink:#ecebe8;--muted:#9a978f;--line:#2a2c31;--accent:#f07a43;--accent-soft:#3a2216;--ok:#4ade80;--warn:#fbbf24;--chip:#24262b;--code:#202227}}
+*{box-sizing:border-box}html,body{margin:0;height:100%}
+body{font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
+.logo{display:flex;align-items:center;gap:8px;font-weight:700;letter-spacing:-.01em}
+.logo svg{width:22px;height:22px}
+.ver{color:var(--muted);font-size:12px}
+.spacer{flex:1}
+select,input,textarea,button{font:inherit;color:inherit}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;padding:5px 10px;cursor:pointer;color:var(--muted)}
+.seg button[aria-pressed=true]{background:var(--accent);color:#fff}
+.seg-label{color:var(--muted);font-size:12px;margin-right:6px}
+main{display:grid;grid-template-columns:240px 1fr 320px;gap:0;height:calc(100% - 55px)}
+aside,section{overflow:auto}
+aside{border-right:1px solid var(--line);padding:14px}
+.right{border-left:1px solid var(--line);border-right:0}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:14px 0 8px}
+h2:first-child{margin-top:0}
+.room{display:flex;justify-content:space-between;align-items:center;width:100%;text-align:left;border:0;background:transparent;padding:7px 9px;border-radius:7px;cursor:pointer}
+.room:hover{background:var(--chip)}.room[aria-current=true]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.badge{font-size:11px;background:var(--chip);border-radius:99px;padding:1px 7px;color:var(--muted)}
+.room[aria-current=true] .badge{background:var(--accent);color:#fff}
+.who{display:flex;gap:9px;padding:7px 4px;border-bottom:1px solid var(--line)}
+.who:last-child{border-bottom:0}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);margin-top:6px;flex:none}
+.who b{display:block;font-weight:600}.who small{color:var(--muted);display:block}
+.tool{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:4px}
+.chat{display:flex;flex-direction:column;height:100%}
+.msgs{flex:1;overflow:auto;padding:18px 22px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:780px}
+.msg .meta{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.msg .meta b{color:var(--ink)}
+.msg .body{white-space:pre-wrap;word-wrap:break-word;margin-top:3px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+.msg.t-task .body,.msg.t-handoff .body{border-left:3px solid var(--accent)}
+.msg.t-done .body{border-left:3px solid var(--ok)}
+.msg.mine .body{background:var(--accent-soft)}
+.type{font-size:11px;border-radius:5px;padding:0 6px;background:var(--chip)}
+.type.task,.type.handoff{background:var(--accent);color:#fff}.type.done{background:var(--ok);color:#fff}
+.empty{color:var(--muted);text-align:center;margin:auto;max-width:420px}
+.empty code,code{background:var(--code);padding:1px 5px;border-radius:5px;font-size:12.5px}
+form{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--line);background:var(--panel)}
+textarea{flex:1;resize:none;height:42px;border:1px solid var(--line);border-radius:9px;padding:9px 11px;background:var(--bg)}
+textarea:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px}
+form select{border:1px solid var(--line);border-radius:9px;padding:0 8px;background:var(--bg)}
+.btn{background:var(--accent);color:#fff;border:0;border-radius:9px;padding:0 16px;font-weight:600;cursor:pointer}
+.btn:disabled{opacity:.5;cursor:default}
+.card{border:1px solid var(--line);border-radius:10px;padding:9px 11px;margin-bottom:8px;background:var(--panel)}
+.card .st{font-size:11px;font-weight:600}
+.st.enviado{color:var(--warn)}.st.assumido{color:var(--accent)}.st.concluido{color:var(--ok)}
+.card p{margin:4px 0 0}
+.file{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.note{color:var(--muted);font-size:12px}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+@media (max-width:980px){main{grid-template-columns:1fr;height:auto}aside{border:0;border-bottom:1px solid var(--line)}.chat{height:70vh}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" aria-label="MyFriends">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="6" fill="var(--accent)"/><circle cx="5" cy="16" r="3.4" fill="#d97757"/><circle cx="27" cy="16" r="3.4" fill="#10a37f"/><circle cx="16" cy="5" r="3" fill="#5b8def"/><circle cx="16" cy="27" r="3" fill="#a78bfa"/><path d="M8 16h2M22 16h2M16 8v2M16 22v2" stroke="var(--accent)" stroke-width="1.6"/></svg>
+    MyFriends <span class="ver" id="ver"></span>
+  </div>
+  <div class="spacer"></div>
+  <span class="seg-label">Pedidos de outros agentes:</span>
+  <div class="seg" role="group" aria-label="Modo de pedidos">
+    <button data-wake="ask" title="O agente avisa você e pergunta antes de assumir">Perguntar antes</button>
+    <button data-wake="auto" title="O agente pode assumir sozinho">Automático</button>
+    <button data-wake="off" title="Só informa, nunca interrompe">Só avisar</button>
+  </div>
+</header>
+<main>
+  <aside>
+    <h2>Salas</h2>
+    <div id="rooms"></div>
+    <h2>Online nesta sala</h2>
+    <div id="who"></div>
+  </aside>
+  <section class="chat">
+    <div class="msgs" id="msgs" aria-live="polite"></div>
+    <form id="f">
+      <select id="type" aria-label="Tipo"><option value="chat">Mensagem</option><option value="task">Tarefa</option></select>
+      <select id="to" aria-label="Para"><option value="">Para a sala</option></select>
+      <textarea id="text" placeholder="Escreva para os agentes desta sala…" aria-label="Mensagem"></textarea>
+      <button class="btn" id="go">Enviar</button>
+    </form>
+  </section>
+  <aside class="right">
+    <h2>Tarefas</h2>
+    <div id="tasks"></div>
+    <h2>Arquivos reservados</h2>
+    <div id="claims"></div>
+    <p class="note" id="hub"></p>
+  </aside>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const base = location.pathname.replace(/\/?$/, '/');
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const ago = (ts) => { const s = Math.max(0, Math.round((Date.now() - ts) / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`; };
+const TYPE = { chat: 'mensagem', context: 'contexto', task: 'tarefa', handoff: 'handoff', claim: 'reserva', done: 'concluído' };
+let room = new URLSearchParams(location.search).get('sala') || null, last = null, stick = true;
+function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('on'); setTimeout(() => el.classList.remove('on'), 2200); }
+async function load() {
+  const r = await fetch(`${base}api/state${room ? `?room=${encodeURIComponent(room)}` : ''}`);
+  const s = await r.json(); last = s; room = s.room;
+  $('ver').textContent = `v${s.version}`;
+  document.querySelectorAll('[data-wake]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.wake === s.config.wake)));
+  $('rooms').innerHTML = s.rooms.length ? s.rooms.map((x) => `<button class="room" data-room="${esc(x.name)}" aria-current="${x.name === room}"><span>${esc(x.name)}</span><span class="badge">${x.online}</span></button>`).join('') : '<p class="note">Nenhuma sala ainda.</p>';
+  const here = s.sessions.filter((x) => x.room === room);
+  $('who').innerHTML = here.length ? here.map((x) => `<div class="who"><span class="dot"></span><div><b>${esc(x.name)}<span class="tool">${esc(x.tool)}</span></b><small>${esc(x.doing || x.status || 'online')} · visto há ${ago(x.lastSeen)}</small></div></div>`).join('') : '<p class="note">Ninguém online nesta sala.</p>';
+  const to = $('to'); const keep = to.value;
+  to.innerHTML = '<option value="">Para a sala</option>' + here.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  to.value = here.some((x) => x.id === keep) ? keep : '';
+  const box = $('msgs');
+  stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  box.innerHTML = s.messages.length ? s.messages.map((m) => `<div class="msg t-${esc(m.type)}${m.fromName === 'Você (painel)' ? ' mine' : ''}"><div class="meta"><b>${esc(m.fromName)}</b>${m.toName ? `→ ${esc(m.toName)}` : ''}<span class="type ${esc(m.type)}">${esc(TYPE[m.type] || m.type)}</span><span>${new Date(m.ts).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span></div><div class="body">${esc(m.text)}${m.files?.length ? `\n<span class="note">arquivos: ${m.files.map((f) => esc(typeof f === 'string' ? f : f.path)).join(', ')}</span>` : ''}</div></div>`).join('')
+    : `<div class="empty"><p><b>Nada por aqui ainda.</b></p><p>Abra o Claude Code, o Codex ou outra IDE com o MyFriends na mesma pasta e peça: <code>usa o MyFriends e vê quem está online</code>.</p></div>`;
+  if (stick) box.scrollTop = box.scrollHeight;
+  const tasks = s.board.tasks.slice().reverse();
+  $('tasks').innerHTML = tasks.length ? tasks.map((t) => `<div class="card"><span class="st ${esc(t.acceptance)}">${t.acceptance === 'enviado' ? 'aguardando alguém assumir' : t.acceptance === 'assumido' ? `assumida por ${esc(t.byName)}` : `concluída por ${esc(t.byName)}`}</span><p>${esc(t.text.split('\n')[0].slice(0, 180))}</p><span class="note">de ${esc(t.fromName)}${t.toName ? ` para ${esc(t.toName)}` : ''}</span></div>`).join('') : '<p class="note">Nenhuma tarefa.</p>';
+  $('claims').innerHTML = s.board.claims.length ? s.board.claims.map((c) => `<div class="card"><b>${esc(c.byName)}</b>${c.files.slice(0, 12).map((f) => `<div class="file">${esc(f)}</div>`).join('')}${c.files.length > 12 ? `<span class="note">+${c.files.length - 12} arquivos</span>` : ''}</div>`).join('') : '<p class="note">Nenhum arquivo reservado.</p>';
+  $('hub').textContent = `Hub: ${s.hub}`;
+}
+document.addEventListener('click', async (e) => {
+  const r = e.target.closest('[data-room]');
+  if (r) { room = r.dataset.room; history.replaceState(null, '', `?sala=${encodeURIComponent(room)}`); load(); }
+  const w = e.target.closest('[data-wake]');
+  if (w) {
+    await fetch(`${base}api/config`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-myfriends': '1' }, body: JSON.stringify({ wake: w.dataset.wake }) });
+    toast({ ask: 'Agentes vão perguntar antes de assumir pedidos.', auto: 'Agentes podem assumir pedidos sozinhos.', off: 'Pedidos só aparecem como aviso.' }[w.dataset.wake]); load();
+  }
+});
+$('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = $('text').value.trim(); if (!text || !room) return;
+  $('go').disabled = true;
+  const r = await fetch(`${base}api/send`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-myfriends': '1' }, body: JSON.stringify({ room, text, type: $('type').value, to: $('to').value }) });
+  $('go').disabled = false;
+  const j = await r.json();
+  if (j.error) toast(j.error); else { $('text').value = ''; stick = true; load(); }
+});
+$('text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('f').requestSubmit(); } });
+load();
+let t = null;
+new EventSource(`${base}api/events`).addEventListener('change', () => { clearTimeout(t); t = setTimeout(load, 150); });
+setInterval(load, 15000);
+</script>
+</body>
+</html>

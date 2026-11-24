@@ -1,13 +1,56 @@
 {
-  "name": "myfriends",
-  "version": "1.2.0",
-  "description": "MyFriends — sessões de agentes de IDEs diferentes (LastGravity, Claude Code, Codex, Antigravity) trabalhando juntas na mesma máquina.",
-  "private": true,
+  "name": "@pblfrnc/myfriends",
+  "version": "1.3.0",
+  "description": "Conecte o Claude Code com o Codex, o Cursor, o GitHub Copilot, o Antigravity e outras IDEs: sessões de IA conversando, dividindo tarefas e passando o trabalho uma para a outra na sua máquina.",
   "license": "MIT",
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "test": "node test/myfriends.test.js && node test/hooks.test.js"
-  }
+    "test": "node test/myfriends.test.js && node test/hooks.test.js && node test/v13.test.js",
+    "build:plugin": "node scripts/build-plugin.js",
+    "painel": "node scripts/myfriends.js painel"
+  },
+  "bin": {
+    "myfriends": "scripts/myfriends.js"
+  },
+  "author": "pblfrnc",
+  "homepage": "https://pblfrnc.github.io/Myfriends/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pblfrnc/Myfriends.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pblfrnc/Myfriends/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "cursor",
+    "github-copilot",
+    "antigravity",
+    "windsurf",
+    "mcp",
+    "mcp-server",
+    "multi-agent",
+    "ai-agents",
+    "agent-collaboration",
+    "handoff",
+    "skills",
+    "claude-code-plugin"
+  ],
+  "files": [
+    "scripts/",
+    "SKILL.md",
+    "skills/",
+    "hooks/",
+    "bin/",
+    ".claude-plugin/",
+    "plugin.json",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "install.sh",
+    "install.ps1"
+  ]
 }

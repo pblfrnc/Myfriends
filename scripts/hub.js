@@ -13,9 +13,9 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const VERSION = '1.2.0';
-const TOOLS = ['lastgravity', 'claude', 'codex', 'antigravity', 'outro'];
-const TOOL_LABEL = { lastgravity: 'LastGravity', claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', outro: 'Agente' };
+const VERSION = '1.3.0';
+const TOOLS = ['lastgravity', 'claude', 'codex', 'antigravity', 'cursor', 'copilot', 'vscode', 'windsurf', 'claude-desktop', 'gemini', 'outro'];
+const TOOL_LABEL = { lastgravity: 'LastGravity', claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', cursor: 'Cursor', copilot: 'Copilot', vscode: 'VS Code', windsurf: 'Windsurf', 'claude-desktop': 'Claude Desktop', gemini: 'Gemini', outro: 'Agente' };
 const TYPES = ['chat', 'context', 'task', 'claim', 'done', 'handoff'];
 const LINE_MAX = 3800; // bytes por linha do .jsonl (abaixo de 4 KB, append atômico com O_APPEND)
 const MSG_MAX = 1_000_000; // tamanho máximo de uma mensagem (com anexos)
@@ -23,6 +23,13 @@ const SNIPPET_MAX = 8000;
 const STALE_MS = 10 * 60 * 1000;
 const READ_BATCH = 200; // mensagens por "read" (as mais antigas primeiro; o resto fica para o próximo)
 const HISTORY = 50; // ao entrar numa sala, a sessão recebe as últimas N mensagens já existentes
+// Limpeza: o histórico de uma sala é compactado quando passa deste tamanho; sessões paradas há
+// mais de GC_DAYS dias são apagadas. Ajuste com MYFRIENDS_ROOM_MAX_BYTES / config "gcDays".
+const ROOM_MAX_DEFAULT = 8 * 1024 * 1024;
+const KEEP_TAIL = 2000; // mensagens mais recentes que a compactação sempre mantém
+const GC_EVERY_MS = 3600 * 1000;
+const CONFIG_DEFAULTS = Object.freeze({ wake: 'ask', trust: [], notify: true, gcDays: 7 });
+const WAKE_MODES = ['ask', 'auto', 'off'];
 const FILES_MAX = 500; // arquivos por mensagem/reserva
 const ROOM_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SID_RE = /^s_[a-f0-9]{8,32}$/;
@@ -193,6 +200,7 @@ class Hub {
   // Sessões expiradas saem da lista, mas guardam sala e cursor para uma retomada pelo mesmo id.
   sessions({ clean = true } = {}) {
     this.init();
+    if (clean) { try { this.gc(); } catch {} }
     let files = [];
     try { files = fs.readdirSync(this.p('sessions')).filter((f) => /^s_[a-f0-9]+\.json$/.test(f)); } catch {}
     const out = [];
@@ -305,8 +313,204 @@ class Hub {
     this.init();
     room = normRoom(room);
     const { msg, line } = this._build(room, from, opts);
-    this.withLock(this.roomFile(room), () => this._append(room, line));
+    let size = 0;
+    this.withLock(this.roomFile(room), () => { this._append(room, line); try { size = fs.statSync(this.roomFile(room)).size; } catch {} });
+    if (size > this.roomMax()) { try { this.compactRoom(room); } catch {} }
     return msg;
+  }
+
+  // ------------------------------------------------------------ configuração
+  // ~/.myfriends/config.json — wake: ask|auto|off, trust: [ferramentas, nomes ou ids], notify, gcDays.
+  config() {
+    this.init();
+    const c = this.readJson(this.p('config.json'), {}) || {};
+    const out = { ...CONFIG_DEFAULTS, ...c };
+    if (!WAKE_MODES.includes(out.wake)) out.wake = CONFIG_DEFAULTS.wake;
+    out.trust = Array.isArray(out.trust) ? out.trust.map(String).filter(Boolean).slice(0, 100) : [];
+    out.notify = out.notify !== false;
+    out.gcDays = Math.max(1, Math.min(365, Number(out.gcDays) || CONFIG_DEFAULTS.gcDays));
+    return out;
+  }
+  setConfig(patch = {}) {
+    const file = this.p('config.json');
+    return this.withLock(file, () => {
+      const cur = this.readJson(file, {}) || {};
+      const next = { ...cur };
+      if (patch.wake !== undefined) {
+        if (!WAKE_MODES.includes(patch.wake)) throw err(`wake deve ser ${WAKE_MODES.join(', ')}.`, 'EINVAL');
+        next.wake = patch.wake;
+      }
+      if (patch.notify !== undefined) next.notify = !!patch.notify;
+      if (patch.gcDays !== undefined) {
+        const n = Number(patch.gcDays);
+        if (!(n >= 1 && n <= 365)) throw err('gcDays deve ser entre 1 e 365.', 'EINVAL');
+        next.gcDays = n;
+      }
+      if (patch.trust !== undefined) next.trust = [...new Set(patch.trust.map((x) => String(x).trim()).filter(Boolean))].slice(0, 100);
+      this.writeAtomic(file, JSON.stringify(next, null, 2));
+      return this.config();
+    });
+  }
+  // Remetente confiável: a ferramenta (claude, codex…), o id da sessão ou parte do nome.
+  isTrusted(msg, cfg = this.config()) {
+    if (!msg) return false;
+    return cfg.trust.some((t) => {
+      const q = t.toLowerCase();
+      return q === String(msg.tool || '').toLowerCase() || q === msg.from || (q.length >= 3 && String(msg.fromName || '').toLowerCase().includes(q));
+    });
+  }
+
+  // ------------------------------------------------------------ limpeza
+  roomMax() { const n = Number(process.env.MYFRIENDS_ROOM_MAX_BYTES); return n > 0 ? n : ROOM_MAX_DEFAULT; }
+  epoch(room) { return Number(this.readJson(this.p('rooms', normRoom(room), 'epoch.json'), {})?.epoch) || 0; }
+
+  // Apaga sessões paradas há mais de `days` dias (e os cursores e vigias delas). Roda sozinho no
+  // máximo uma vez por hora; `force` roda agora.
+  gc({ days, force = false } = {}) {
+    this.init();
+    const stamp = this.p('state', 'gc.json');
+    if (!force) {
+      try { if (now() - fs.statSync(stamp).mtimeMs < GC_EVERY_MS) return null; } catch {}
+    }
+    try { this.writeAtomic(stamp, JSON.stringify({ at: now() })); } catch {}
+    const maxAge = (Number(days) || this.config().gcDays) * 86400 * 1000;
+    const res = { sessions: 0, cursors: 0, watchers: 0 };
+    const keep = new Set();
+    let files = [];
+    try { files = fs.readdirSync(this.p('sessions')); } catch {}
+    for (const f of files) {
+      if (!/^s_[a-f0-9]+\.json$/.test(f)) continue;
+      const id = f.slice(0, -5);
+      const s = this.readJson(this.p('sessions', f));
+      if (s && (this.alive(s) || now() - (s.lastSeen || 0) < maxAge)) { keep.add(id); continue; }
+      try { fs.unlinkSync(this.p('sessions', f)); res.sessions++; } catch {}
+    }
+    let cfiles = [];
+    try { cfiles = fs.readdirSync(this.p('cursors')); } catch {}
+    for (const f of cfiles) {
+      const m = f.match(/^(s_[a-f0-9]+)\.json$/);
+      if (!m || keep.has(m[1])) continue;
+      try { if (now() - fs.statSync(this.p('cursors', f)).mtimeMs < maxAge) continue; fs.unlinkSync(this.p('cursors', f)); res.cursors++; } catch {}
+    }
+    let sfiles = [];
+    try { sfiles = fs.readdirSync(this.p('state')); } catch {}
+    for (const f of sfiles) {
+      const m = f.match(/^watch-(s_[a-f0-9]+)\.pid$/);
+      if (!m) continue;
+      try {
+        const pid = Number(fs.readFileSync(this.p('state', f), 'utf8'));
+        if (!pid || !pidAlive(pid) || !keep.has(m[1])) { fs.unlinkSync(this.p('state', f)); res.watchers++; }
+      } catch {}
+    }
+    return res;
+  }
+
+  // Compacta o histórico de uma sala: guarda as últimas KEEP_TAIL mensagens e, das antigas, só o que
+  // o quadro ainda precisa (tarefas não concluídas, as reservas delas e reservas ativas). O arquivo
+  // antigo vai para rooms/<sala>/archive/. Os cursores de todas as sessões são convertidos para o
+  // arquivo novo, então ninguém perde nem recebe de novo mensagens.
+  compactRoom(room, { keepTail = KEEP_TAIL } = {}) {
+    this.init();
+    room = normRoom(room);
+    const file = this.roomFile(room);
+    return this.withLock(file, () => {
+      let buf;
+      try { buf = fs.readFileSync(file); } catch { return null; }
+      // Linhas com posição original (início/fim em bytes).
+      const lines = [];
+      let pos = 0;
+      while (pos < buf.length) {
+        let nl = buf.indexOf(10, pos);
+        if (nl < 0) break; // linha incompleta no fim: fica de fora (não deveria acontecer sob o lock)
+        const raw = buf.subarray(pos, nl + 1);
+        let m = null;
+        try { m = JSON.parse(raw.toString('utf8')); } catch {}
+        lines.push({ start: pos, end: nl + 1, raw, m: m && MID_RE.test(m.id) ? m : null });
+        pos = nl + 1;
+      }
+      const msgs = lines.filter((l) => l.m);
+      if (msgs.length <= keepTail) return { room, kept: msgs.length, dropped: 0 };
+      // O que o quadro ainda precisa (sem olhar quem está vivo: isso é decidido na leitura).
+      const tasks = new Map(), claimsByTask = new Map(), looseClaims = new Map();
+      for (const l of msgs) {
+        const m = l.m;
+        if (m.type === 'task' || m.type === 'handoff') tasks.set(m.id, { line: l, done: false });
+        else if (m.type === 'claim') {
+          if (m.ref && tasks.has(m.ref)) { if (!claimsByTask.has(m.ref)) claimsByTask.set(m.ref, []); claimsByTask.get(m.ref).push(l); }
+          else looseClaims.set(m.id, { line: l, by: m.from, active: true });
+        } else if (m.type === 'done') {
+          if (m.ref && tasks.has(m.ref)) tasks.get(m.ref).done = true;
+          for (const c of looseClaims.values()) if (c.by === m.from && (!m.ref || m.ref === c.line.m.id)) c.active = false;
+        }
+      }
+      const tailStart = msgs[msgs.length - keepTail].start;
+      const keep = new Set();
+      for (const l of msgs) if (l.start >= tailStart) keep.add(l);
+      for (const [id, t] of tasks) {
+        if (t.done) continue;
+        keep.add(t.line);
+        for (const c of claimsByTask.get(id) || []) keep.add(c);
+      }
+      for (const c of looseClaims.values()) if (c.active) keep.add(c.line);
+      const kept = lines.filter((l) => keep.has(l));
+      const out = Buffer.concat(kept.map((l) => l.raw));
+      // Conversão de posições: tudo até o fim de uma linha guardada vira o fim dela no arquivo novo.
+      const map = [];
+      let acc = 0;
+      for (const l of kept) { acc += l.raw.length; map.push([l.end, acc]); }
+      const translate = (off) => {
+        if (!Number.isInteger(off) || off <= 0) return 0;
+        let lo = 0, hi = map.length - 1, best = 0;
+        while (lo <= hi) { const mid = (lo + hi) >> 1; if (map[mid][0] <= off) { best = map[mid][1]; lo = mid + 1; } else hi = mid - 1; }
+        return best;
+      };
+      // Trava os cursores de todas as sessões que leem esta sala antes de trocar o arquivo.
+      let cfiles = [];
+      try { cfiles = fs.readdirSync(this.p('cursors')).filter((f) => /^s_[a-f0-9]+\.json$/.test(f)); } catch {}
+      const locks = [];
+      try {
+        for (const f of cfiles) {
+          const lock = `${this.p('cursors', f)}.lock`;
+          const deadline = now() + 8000;
+          for (;;) {
+            try { fs.mkdirSync(lock, { mode: 0o700 }); locks.push(lock); break; } catch (e) {
+              if (e.code !== 'EEXIST') break;
+              try { if (now() - fs.statSync(lock).mtimeMs > 10000) { fs.rmdirSync(lock); continue; } } catch {}
+              if (now() > deadline) throw err('Hub ocupado (lock). Tente de novo.', 'EBUSY');
+              sleepSync(5 + Math.random() * 20);
+            }
+          }
+        }
+        const adir = this.p('rooms', room, 'archive');
+        this.ensureDir(adir);
+        const ep = this.epoch(room) + 1;
+        fs.copyFileSync(file, path.join(adir, `messages-${ep - 1}-${now()}.jsonl`));
+        const tmp = `${file}.tmp-${process.pid}`;
+        fs.writeFileSync(tmp, out, { mode: 0o600 });
+        fs.renameSync(tmp, file);
+        this.writeAtomic(this.p('rooms', room, 'epoch.json'), JSON.stringify({ epoch: ep, at: now() }));
+        for (const f of cfiles) {
+          const cf = this.p('cursors', f);
+          const c = this.readJson(cf, null);
+          if (!c) continue;
+          let changed = false;
+          if (Number.isInteger(c[room])) { c[room] = translate(c[room]); changed = true; }
+          if (c.$results && Number.isInteger(c.$results[room])) { c.$results[room] = translate(c.$results[room]); changed = true; }
+          if (changed) this.writeAtomic(cf, JSON.stringify(c));
+        }
+        // Blobs de mensagens que saíram do arquivo ativo.
+        const keptIds = new Set(kept.filter((l) => l.m).map((l) => l.m.id));
+        let blobs = [];
+        try { blobs = fs.readdirSync(this.p('rooms', room, 'blobs')); } catch {}
+        for (const b of blobs) { const id = b.replace(/\.json$/, ''); if (!keptIds.has(id)) { try { fs.renameSync(this.p('rooms', room, 'blobs', b), path.join(adir, b)); } catch {} } }
+        // Arquivos antigos: guarda os 3 mais recentes.
+        const olds = fs.readdirSync(adir).filter((f) => /^messages-\d+-\d+\.jsonl$/.test(f)).sort((a, b) => Number(a.split('-')[2].split('.')[0]) - Number(b.split('-')[2].split('.')[0]));
+        for (const f of olds.slice(0, -3)) { try { fs.unlinkSync(path.join(adir, f)); } catch {} }
+        return { room, kept: keptIds.size, dropped: msgs.length - keptIds.size, epoch: ep, before: buf.length, after: out.length };
+      } finally {
+        for (const l of locks) { try { fs.rmdirSync(l); } catch {} }
+      }
+    });
   }
 
   // Lê mensagens a partir de um deslocamento (bytes). Linhas incompletas no fim ficam para a próxima leitura.
@@ -729,5 +933,5 @@ function fmtPending(b, meId) {
 module.exports = {
   Hub, VERSION, TOOLS, TOOL_LABEL, TYPES, LINE_MAX, STALE_MS, READ_BATCH, HISTORY, FILES_MAX,
   projectRoom, normRoom, realDir, scrub, isSecretFile, parseSince, pidAlive, defaultHome,
-  fmtSession, fmtMessage, fmtBoard, fmtPending, fmtFiles, acceptState, sha1,
+  fmtSession, fmtMessage, fmtBoard, fmtPending, fmtFiles, acceptState, sha1, WAKE_MODES, CONFIG_DEFAULTS, KEEP_TAIL,
 };

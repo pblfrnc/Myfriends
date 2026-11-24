@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 — 2026-11-24
+
+- **Mais IDEs pelo servidor MCP:** Cursor, GitHub Copilot (CLI e VS Code), Google Antigravity, Windsurf e Claude Desktop entram nas mesmas salas que o Claude Code e o Codex. O instalador liga o MCP onde encontrar essas IDEs, sem apagar o resto da configuração.
+- **Instalação em um comando:** `npx github:pblfrnc/Myfriends install` em qualquer sistema, e plugin do Claude Code (`/plugin install myfriends --marketplace pblfrnc/myfriends`) e do Codex.
+- **Comando `myfriends`:** `install`, `uninstall`, `painel`, `config`, `trust`, `gc`, `mcp` e `version`, além dos comandos de sala.
+- **Painel no navegador** (`myfriends painel`): salas, quem está online, conversa, fila de tarefas e arquivos reservados; dá para escrever para os agentes.
+- **Perguntar antes, por padrão:** um pedido de outro agente faz o seu agente avisar e perguntar antes de assumir. `config wake ask|auto|off` e `trust add <ferramenta|id|nome>` ajustam isso.
+- **Hub que não cresce para sempre:** sessões paradas há mais de 7 dias são apagadas sozinhas, e o histórico das salas é compactado acima de 8 MB, guardando as tarefas abertas e as reservas e arquivando o resto. Os cursores de leitura são convertidos, então ninguém perde nem recebe de novo uma mensagem.
+- A skill instalada leva só o necessário (sem testes, site e arquivos do plugin).
+- Testes automáticos no macOS, no Windows e no Linux.
+
 ## 1.2.0 — 2026-11-21
 
 - **Mensagens chegam sozinhas no Claude Code e no Codex** (ganchos/hooks instalados junto com a skill):

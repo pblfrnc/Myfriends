@@ -26,6 +26,19 @@ const HELP = `MyFriends — sessões de agentes conversando na mesma máquina
   rooms                                salas existentes
   leave                                sai (libera reservas)
 
+Configuração e manutenção (não precisam de sessão):
+  install [--yes] [--only claude,codex,cursor…] [--no-hooks] [--no-mcp]   instala nas IDEs desta máquina
+  uninstall                            desliga avisos automáticos e conexões MCP (mantém o histórico)
+  painel [--port 4800] [--no-open]     abre o painel no navegador: sessões, conversa, tarefas, reservas
+  config                               mostra a configuração
+  config wake ask|auto|off             o que um pedido de outro agente faz (padrão: ask = pergunta antes)
+  config notify on|off                 notificações do sistema
+  config gcDays <n>                    apaga sessões paradas há mais de n dias (padrão 7)
+  trust add|remove <claude|codex|id|nome>   remetentes que podem acionar o agente sem perguntar
+  gc [--compact]                       limpa sessões antigas agora (e compacta o histórico das salas)
+  mcp [--tool cursor]                  servidor MCP (stdio) para Cursor, Copilot, VS Code, Antigravity…
+  version
+
 Opções gerais: --session <id>  --json  --dir <pasta do projeto>  --tool <ferramenta>
 Hub: ${'$'}MYFRIENDS_HOME ou ~/.myfriends`;
 
@@ -36,7 +49,7 @@ const HANDOFF_FIELDS = [
   ['next', 'Próximo passo', /(pr[óo]xim|next|falta|pendente)/i],
 ];
 
-const BOOL = new Set(['json', 'all', 'force', 'help', 'quiet']);
+const BOOL = new Set(['json', 'all', 'force', 'help', 'quiet', 'no-open', 'compact', 'yes', 'no-hooks', 'no-mcp']);
 function parse(argv) {
   const o = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -253,10 +266,60 @@ function readSnippet(folder, spec) {
   return { path: rel.replace(/\\/g, '/'), lines: `${a}-${b}`, text: lines.slice(a - 1, b).join('\n') };
 }
 
+// Comandos que não precisam de sessão.
+async function admin(cmd, rest, o, out) {
+  const hub = new H.Hub().init();
+  const show = (txt, data) => out(o.json ? JSON.stringify(data) : txt);
+  switch (cmd) {
+    case 'version': case '--version': case '-v': return show(`MyFriends ${H.VERSION}`, { version: H.VERSION });
+    case 'install': return require('./install').cliMain(rest);
+    case 'uninstall': return require('./install').cliMain(['--uninstall', ...rest]);
+    case 'hook': return require('./hook').main(rest);
+    case 'mcp': return require('./mcp').main(rest);
+    case 'painel': case 'panel': case 'dashboard': return require('./panel').main(rest);
+    case 'gc': {
+      const r = hub.gc({ force: true, days: o.days });
+      const comp = [];
+      if (o.compact) for (const room of hub.rooms()) { const c = hub.compactRoom(room.name); if (c && c.dropped) comp.push(c); }
+      return show(`Limpeza: ${r.sessions} sessão(ões) antiga(s), ${r.cursors} cursor(es) e ${r.watchers} vigia(s) removidos.${o.compact ? ` Salas compactadas: ${comp.length ? comp.map((c) => `${c.room} (${c.dropped} msgs antigas arquivadas)`).join(', ') : 'nenhuma precisava'}.` : ''}`, { ...r, compacted: comp });
+    }
+    case 'config': {
+      const [key, val] = o._;
+      if (!key) {
+        const c = hub.config();
+        return show(`wake: ${c.wake}  (ask = avisa e pergunta antes · auto = o agente assume sozinho · off = só informa)\nnotify: ${c.notify ? 'on' : 'off'}\ngcDays: ${c.gcDays}\ntrust: ${c.trust.length ? c.trust.join(', ') : '(ninguém)'}\nArquivo: ${hub.p('config.json')}`, c);
+      }
+      const patch = {};
+      if (key === 'wake') patch.wake = val;
+      else if (key === 'notify') patch.notify = !/^(off|false|0|nao|não)$/i.test(String(val));
+      else if (key === 'gcDays') patch.gcDays = val;
+      else throw new Error('Use: config wake ask|auto|off · config notify on|off · config gcDays <n>');
+      const c = hub.setConfig(patch);
+      return show(`Configuração salva: ${key} = ${key === 'notify' ? (c.notify ? 'on' : 'off') : c[key]}`, c);
+    }
+    case 'trust': {
+      const [op, ...who] = o._;
+      const name = who.join(' ').trim();
+      const c = hub.config();
+      if (op === 'add' && name) return show(`Confiável: ${name}.`, hub.setConfig({ trust: [...c.trust, name] }));
+      if ((op === 'remove' || op === 'rm') && name) return show(`Removido: ${name}.`, hub.setConfig({ trust: c.trust.filter((t) => t !== name) }));
+      return show(`Confiáveis: ${c.trust.length ? c.trust.join(', ') : '(ninguém)'}. Use: trust add|remove <claude|codex|id|nome>`, c);
+    }
+    default: return undefined;
+  }
+}
+const ADMIN = new Set(['version', '--version', '-v', 'install', 'uninstall', 'hook', 'mcp', 'painel', 'panel', 'dashboard', 'gc', 'config', 'trust']);
+
 async function main(argv, { out = (s) => process.stdout.write(`${s}\n`), err = (s) => process.stderr.write(`${s}\n`) } = {}) {
   const [cmd, ...rest] = argv;
   const o = parse(rest);
-  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h' || o.help) { out(HELP); return 0; }
+  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h' || (o.help && !ADMIN.has(cmd))) { out(HELP); return 0; }
+  if (ADMIN.has(cmd)) {
+    try { const code = await admin(cmd, rest, o, out); return typeof code === 'number' ? code : 0; } catch (e) {
+      if (o.json) out(JSON.stringify({ error: e.message, code: e.code || null })); else err(`Erro: ${e.message}`);
+      return 1;
+    }
+  }
   try {
     await new Cli(o, out).run(cmd);
     return 0;
@@ -267,6 +330,6 @@ async function main(argv, { out = (s) => process.stdout.write(`${s}\n`), err = (
   }
 }
 
-module.exports = { main, parse, readSnippet };
+module.exports = { main, parse, readSnippet, Cli };
 
 if (require.main === module) main(process.argv.slice(2)).then((code) => { process.exitCode = code; });

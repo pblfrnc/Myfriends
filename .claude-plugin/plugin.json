@@ -1,0 +1,25 @@
+{
+  "name": "myfriends",
+  "displayName": "MyFriends",
+  "version": "1.3.0",
+  "description": "Conecta o Claude Code com o Codex, o Cursor, o GitHub Copilot, o Antigravity e outras IDEs na mesma máquina: as sessões de IA conversam, dividem tarefas, reservam arquivos e passam o trabalho (handoff) uma para a outra.",
+  "author": {
+    "name": "pblfrnc",
+    "url": "https://github.com/pblfrnc"
+  },
+  "homepage": "https://pblfrnc.github.io/Myfriends/",
+  "repository": "https://github.com/pblfrnc/Myfriends",
+  "license": "MIT",
+  "keywords": [
+    "multi-agent",
+    "codex",
+    "cursor",
+    "copilot",
+    "antigravity",
+    "collaboration",
+    "handoff",
+    "mcp",
+    "agents",
+    "myfriends"
+  ]
+}

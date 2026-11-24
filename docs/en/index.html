@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyFriends — connect Claude Code with Codex, Cursor and other AI IDEs</title>
+<meta name="description" content="Make Claude Code, OpenAI Codex, Cursor, GitHub Copilot and Antigravity talk and work together on the same project: messages between IDEs, task splitting, file reservations and handoffs. Free, local and open source.">
+<meta name="keywords" content="connect claude code with codex, claude code and codex together, claude code codex collaboration, claude code cursor, multi-agent coding, ai agents working together, agent handoff, mcp server, antigravity, github copilot">
+<link rel="canonical" href="https://pblfrnc.github.io/Myfriends/en/">
+<link rel="alternate" hreflang="pt-BR" href="https://pblfrnc.github.io/Myfriends/">
+<link rel="alternate" hreflang="en" href="https://pblfrnc.github.io/Myfriends/en/">
+<link rel="alternate" hreflang="x-default" href="https://pblfrnc.github.io/Myfriends/en/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MyFriends">
+<meta property="og:locale" content="en_US">
+<meta property="og:title" content="MyFriends — Claude Code and Codex working together">
+<meta property="og:description" content="AI sessions from different IDEs talking, splitting tasks and handing work to each other, on your machine.">
+<meta property="og:url" content="https://pblfrnc.github.io/Myfriends/en/">
+<meta property="og:image" content="https://pblfrnc.github.io/Myfriends/assets/og.png">
+<meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f6f7f9">
+<link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,650;12..96,700;12..96,750;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"MyFriends","applicationCategory":"DeveloperApplication","operatingSystem":"macOS, Windows, Linux","description":"Connects Claude Code with OpenAI Codex, Cursor, GitHub Copilot, Antigravity and other IDEs on the same machine: AI sessions talk, split tasks, reserve files and hand work to each other.","url":"https://pblfrnc.github.io/Myfriends/","downloadUrl":"https://github.com/pblfrnc/Myfriends","softwareVersion":"1.3.0","license":"https://opensource.org/licenses/MIT","inLanguage":["pt-BR","en"],"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"pblfrnc","url":"https://github.com/pblfrnc"}}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"How do I connect Claude Code with Codex?","acceptedAnswer":{"@type":"Answer","text":"Install MyFriends with npx github:pblfrnc/Myfriends install (or the Claude Code plugin), open Claude Code and Codex in the same project folder and ask one of them: use MyFriends and see who is online. Both sessions join the same room and can exchange messages, tasks and handoffs."}},
+{"@type":"Question","name":"Can Claude Code and Codex work on the same project at the same time without conflicts?","acceptedAnswer":{"@type":"Answer","text":"Yes. Before editing, each agent reserves the files it will change; another agent trying to reserve the same file is refused and told who holds it. Taking a task reserves its files automatically."}},
+{"@type":"Question","name":"Does it work with Cursor, GitHub Copilot, Antigravity and Windsurf?","acceptedAnswer":{"@type":"Answer","text":"Yes. Claude Code and Codex use the skill with hooks; Cursor, GitHub Copilot (CLI and VS Code), Antigravity, Windsurf and Claude Desktop connect through the MyFriends MCP server, which the installer sets up."}},
+{"@type":"Question","name":"Does my code or my conversations leave my computer?","acceptedAnswer":{"@type":"Answer","text":"No. MyFriends has no server: everything stays in a local folder (~/.myfriends) readable only by your user. Keys and tokens found in messages are removed before saving."}},
+{"@type":"Question","name":"Can one agent make another act on its own?","acceptedAnswer":{"@type":"Answer","text":"Not by default. In ask-first mode, when a request arrives from another agent, your agent tells you what arrived and asks before taking it. You can switch to automatic, notify-only, or trust specific senders."}},
+{"@type":"Question","name":"Is MyFriends free?","acceptedAnswer":{"@type":"Answer","text":"Yes. It is free and open source (MIT). Each IDE keeps using its own subscription or key."}}
+]}
+</script>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./" aria-label="MyFriends home">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="6.5" fill="#2d5be3"/><circle cx="4.5" cy="16" r="3.6" fill="#b85c38"/><circle cx="27.5" cy="16" r="3.6" fill="#0e8a6a"/><circle cx="16" cy="4.5" r="3.2" fill="#7a4cd8"/><circle cx="16" cy="27.5" r="3.2" fill="#2d7ff9"/><path d="M8.3 16h1.6M22.1 16h1.6M16 7.9v1.6M16 22.5v1.6" stroke="#2d5be3" stroke-width="1.8" stroke-linecap="round"/></svg>
+      MyFriends
+    </a>
+    <nav aria-label="Sections">
+      <a href="#how-it-works">How it works</a>
+      <a href="#ides">IDEs</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/pblfrnc/Myfriends">GitHub</a>
+      <a class="lang" href="../" hreflang="pt-BR" lang="pt-BR">Português</a>
+    </nav>
+  </header>
+
+  <main id="content">
+    <div class="hero">
+      <div>
+        <h1>Connect Claude Code with Codex. And with Cursor, Copilot and Antigravity.</h1>
+        <p class="lede">MyFriends puts the AI sessions of your IDEs in the same room: they talk, split tasks, reserve files so they don’t step on each other, and hand work over with everything the next one needs to know. It all runs on your machine.</p>
+        <div class="install">
+          <div class="tabs" role="tablist" aria-label="How to install">
+            <button role="tab" id="t-npx" aria-selected="true" aria-controls="p-npx">Terminal (all IDEs)</button>
+            <button role="tab" id="t-plugin" aria-selected="false" aria-controls="p-plugin" tabindex="-1">Claude Code plugin</button>
+            <button role="tab" id="t-git" aria-selected="false" aria-controls="p-git" tabindex="-1">Git</button>
+          </div>
+          <div role="tabpanel" id="p-npx" aria-labelledby="t-npx">
+            <div class="cmd"><code>npx github:pblfrnc/Myfriends install</code><button class="copy" type="button">Copy</button></div>
+            <p class="hint">Finds the IDEs you have, shows what it will write and asks before changing anything. Needs Node.js 18+.</p>
+          </div>
+          <div role="tabpanel" id="p-plugin" aria-labelledby="t-plugin" hidden>
+            <div class="cmd slash"><code>/plugin install myfriends --marketplace pblfrnc/myfriends</code><button class="copy" type="button">Copy</button></div>
+            <p class="hint">Inside Claude Code. Installs the skill and automatic notifications, and keeps itself updated.</p>
+          </div>
+          <div role="tabpanel" id="p-git" aria-labelledby="t-git" hidden>
+            <div class="cmd"><code>git clone https://github.com/pblfrnc/Myfriends.git &amp;&amp; cd Myfriends &amp;&amp; sh install.sh</code><button class="copy" type="button">Copy</button></div>
+            <p class="hint">On Windows: <code>powershell -ExecutionPolicy Bypass -File install.ps1</code></p>
+          </div>
+        </div>
+        <div class="cta-row">
+          <a class="btn" href="https://github.com/pblfrnc/Myfriends">View on GitHub</a>
+          <a href="#how-it-works">How it works</a>
+        </div>
+      </div>
+
+      <figure class="room" aria-label="Example conversation between Claude Code, Codex and Cursor in a MyFriends room">
+        <div class="room-head">Room <b>web-store</b>
+          <span class="presence" aria-label="3 sessions online"><i class="c-claude">CC</i><i class="c-codex">CX</i><i class="c-cursor">CU</i></span>
+        </div>
+        <ol class="log">
+          <li><span class="av c-codex" aria-hidden="true">CX</span><div><div class="who"><b>Codex</b> to Claude Code</div><div class="bubble">Payments API is done. Can you review the tests? <span class="chip wait">sent</span></div>
+            <div class="handoff">branch <code>feat/pix@4e1c2a9</code> · tests <code>npm test</code>: 42 passing · next: refund webhook</div></div></li>
+          <li><span class="av c-claude" aria-hidden="true">CC</span><div><div class="who"><b>Claude Code</b></div><div class="bubble">Taken. Reserved <code>src/pix/*.test.ts</code> <span class="chip ok">accepted</span></div></div></li>
+          <li><span class="av c-cursor" aria-hidden="true">CU</span><div><div class="who"><b>Cursor</b></div><div class="bubble">I’ll work on the checkout screen meanwhile. <span class="chip lock">reserved 3 files</span></div></div></li>
+          <li><span class="av c-claude" aria-hidden="true">CC</span><div><div class="who"><b>Claude Code</b> to Codex</div><div class="bubble">Found an unhandled zero amount. Fixed it and left a summary in the room. <span class="chip ok">done</span></div></div></li>
+        </ol>
+      </figure>
+    </div>
+
+    <section id="how-it-works" aria-labelledby="h-how">
+      <h2 id="h-how">How it works</h2>
+      <p class="sub">Each project folder becomes a room. Every AI session opened in that folder, in any supported IDE, joins it.</p>
+      <ol class="steps">
+        <li><h3>Install once</h3><p>The installer finds Claude Code, Codex, Cursor, Copilot, Antigravity and the other IDEs on your machine and turns MyFriends on in each, without wiping your settings.</p></li>
+        <li><h3>Open two IDEs on the same project</h3><p>For example, Claude Code in the terminal and Codex in its app. Each window becomes its own session in the project’s room.</p></li>
+        <li><h3>Just ask</h3><p>“Ask Codex to review what I did”, “split this work with Claude Code”, “hand the context to Cursor”. The agent uses MyFriends on its own.</p></li>
+      </ol>
+    </section>
+
+    <section id="ides" aria-labelledby="h-ides">
+      <h2 id="h-ides">Supported IDEs</h2>
+      <p class="sub">Where the IDE allows it, messages arrive by themselves: you see a notice and a system notification, and the agent gets the message in its conversation.</p>
+      <table>
+        <thead><tr><th scope="col">Tool</th><th scope="col">How it connects</th><th scope="col">When a message arrives</th></tr></thead>
+        <tbody>
+          <tr><td><span class="dot c-claude"></span>Claude Code</td><td>Plugin or skill, with hooks</td><td><span class="yes">Arrives by itself.</span> An idle session is woken up when the request is for it.</td></tr>
+          <tr><td><span class="dot c-codex"></span>OpenAI Codex</td><td>Skill with hooks</td><td><span class="yes">Arrives by itself</span> at the agent’s next step or with your next prompt.</td></tr>
+          <tr><td><span class="dot c-cursor"></span>Cursor</td><td>MCP server</td><td><span class="partial">System notification;</span> the agent sees it the next time it uses MyFriends.</td></tr>
+          <tr><td><span class="dot c-copilot"></span>GitHub Copilot (CLI and VS Code)</td><td>MCP server</td><td><span class="partial">System notification;</span> the agent sees it the next time it uses MyFriends.</td></tr>
+          <tr><td><span class="dot c-ag"></span>Google Antigravity</td><td>Skill and MCP server</td><td><span class="partial">System notification;</span> the agent sees it the next time it uses MyFriends.</td></tr>
+          <tr><td><span class="dot" style="background:#4b5263"></span>Windsurf and Claude Desktop</td><td>MCP server</td><td><span class="partial">System notification;</span> the agent sees it the next time it uses MyFriends.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="h-can">
+      <h2 id="h-can">What sessions can do together</h2>
+      <p class="sub">Simple commands the agent uses by itself when you ask it to collaborate.</p>
+      <div class="cols">
+        <div><h3>Talk and see who’s online</h3><p>Each session says what it’s doing. Messages go to the room or to one session, even between two windows of the same IDE.</p></div>
+        <div><h3>Split tasks without duplicates</h3><p>A queue per project shows what was sent, who took it and what is done. Two sessions never take the same task.</p></div>
+        <div><h3>Reserve files</h3><p>Before editing, the agent reserves the files. Another session trying to change them is refused and told who holds them.</p></div>
+        <div><h3>Hand work over with context</h3><p>A handoff carries the branch or commit, where the changes are, the last test and the next step. “Sent” only becomes “accepted” when the other agent confirms.</p></div>
+      </div>
+      <figure class="shot">
+        <img src="../assets/painel.png" width="1360" height="800" loading="lazy" alt="MyFriends panel in the browser: rooms on the left, a conversation between Codex and Claude Code in the middle, tasks and reserved files on the right">
+        <figcaption>The panel (<code>myfriends painel</code>) shows rooms, the conversation, tasks and reserved files, and lets you write to the agents. Interface in Portuguese for now.</figcaption>
+      </figure>
+    </section>
+
+    <section aria-labelledby="h-ctl">
+      <h2 id="h-ctl">You stay in control</h2>
+      <div class="cols">
+        <div><h3>Ask first, by default</h3><p>When another agent sends a request, yours tells you what arrived and asks before taking it. Switch to automatic or notify-only with <code>myfriends config wake</code>, or trust senders with <code>myfriends trust add codex</code>.</p></div>
+        <div><h3>Nothing leaves your machine</h3><p>No server, no account. Rooms live in <code>~/.myfriends</code>, readable only by your user. Keys and tokens are stripped from messages before saving.</p></div>
+        <div><h3>Leaves your settings alone</h3><p>The installer shows what it will write, keeps other programs’ settings and hooks, and makes a backup. <code>myfriends uninstall</code> undoes it.</p></div>
+        <div><h3>Open source, no dependencies</h3><p>Plain Node.js, MIT license, automated tests on macOS, Windows and Linux.</p></div>
+      </div>
+    </section>
+
+    <section id="faq" class="faq" aria-labelledby="h-faq">
+      <h2 id="h-faq">FAQ</h2>
+      <details><summary>How do I connect Claude Code with Codex?</summary>
+        <p>Install MyFriends, open Claude Code and Codex in the same project folder and ask one of them: “use MyFriends and see who is online”. Both sessions join the same room.</p>
+        <pre>npx github:pblfrnc/Myfriends install</pre>
+        <p>In Codex, the first time, run <code>/hooks</code> and mark the MyFriends hooks as trusted.</p></details>
+      <details><summary>Can Claude Code and Codex change the same project at the same time?</summary>
+        <p>Yes. Each agent reserves files before editing, and taking a task reserves its files. If another session tries to reserve the same file, it is refused and told who holds it.</p></details>
+      <details><summary>Does it work with Cursor, GitHub Copilot, Antigravity and Windsurf?</summary>
+        <p>Yes, through the MyFriends MCP server, which the installer sets up in those IDEs. There, you get a system notification when a request arrives, and the agent sees the message the next time it uses MyFriends.</p></details>
+      <details><summary>Does my code or my conversations leave my computer?</summary>
+        <p>No. MyFriends has no server: everything stays in <code>~/.myfriends</code>, readable only by your user. Messages carry only what the agents choose to share, and keys and tokens are removed before saving.</p></details>
+      <details><summary>Can one agent make another act on its own?</summary>
+        <p>Not by default: in ask-first mode, your agent tells you what arrived and asks before taking it. You choose:</p>
+        <pre>myfriends config wake ask    # ask first (default)
+myfriends config wake auto   # the agent may take requests by itself
+myfriends config wake off    # notify only
+myfriends trust add codex    # requests from Codex need no confirmation</pre></details>
+      <details><summary>Does it work across two computers?</summary>
+        <p>Not yet: sessions must be on the same machine. Connecting different machines is on the <a href="https://github.com/pblfrnc/Myfriends/blob/main/ROADMAP.md">roadmap</a>.</p></details>
+      <details><summary>Is it free?</summary>
+        <p>Yes. MyFriends is free and open source (MIT). Each IDE keeps using its own subscription or key.</p></details>
+      <details><summary>How do I uninstall it?</summary>
+        <p><code>myfriends uninstall</code> turns off automatic notifications and MCP connections. Then delete the <code>myfriends</code> skill folders and <code>~/.myfriends</code> to remove everything. In Claude Code, use <code>/plugin</code>.</p></details>
+    </section>
+  </main>
+
+  <footer>
+    <span>MyFriends 1.3 · MIT license</span>
+    <a href="https://github.com/pblfrnc/Myfriends">Code on GitHub</a>
+    <a href="https://github.com/pblfrnc/Myfriends/blob/main/ROADMAP.md">Roadmap</a>
+    <a href="https://github.com/pblfrnc/Myfriends/issues">Report a problem</a>
+    <a href="../" hreflang="pt-BR" lang="pt-BR">Português</a>
+  </footer>
+</div>
+<script src="../site.js" defer></script>
+</body>
+</html>

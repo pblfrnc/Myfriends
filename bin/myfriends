@@ -1,0 +1,3 @@
+#!/bin/sh
+# Comando "myfriends" (o plugin do Claude Code põe esta pasta no PATH do agente).
+exec node "$(dirname "$0")/../scripts/myfriends.js" "$@"

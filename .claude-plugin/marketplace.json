@@ -1,0 +1,28 @@
+{
+  "name": "myfriends",
+  "owner": {
+    "name": "pblfrnc",
+    "url": "https://github.com/pblfrnc"
+  },
+  "description": "MyFriends — sessões de IA de IDEs diferentes trabalhando juntas na mesma máquina.",
+  "plugins": [
+    {
+      "name": "myfriends",
+      "source": ".",
+      "description": "Conecta o Claude Code com o Codex, o Cursor, o GitHub Copilot, o Antigravity e outras IDEs na mesma máquina: as sessões de IA conversam, dividem tarefas, reservam arquivos e passam o trabalho (handoff) uma para a outra.",
+      "category": "productivity",
+      "keywords": [
+        "multi-agent",
+        "codex",
+        "cursor",
+        "copilot",
+        "antigravity",
+        "collaboration",
+        "handoff",
+        "mcp",
+        "agents",
+        "myfriends"
+      ]
+    }
+  ]
+}
